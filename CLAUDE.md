@@ -3,6 +3,7 @@
 단일 HTML 파일 북마크 관리자. 빌드·패키지·자동 테스트가 없고, `index.html`을 브라우저로 열면 실행된다.
 
 - 기능 목록, 데이터 모델, 설계 결정(D-NNN), 알려진 문제(K-NN): [docs/DECISIONS.md](docs/DECISIONS.md) — **작업 전에 읽는다.**
+- 진행 중인 설계: 여러 기기 동기화(Firebase) [docs/SYNC-DESIGN.md](docs/SYNC-DESIGN.md) — 단계별로 구현한다(6장). 설계가 확정되기 전에는 아래 규약이 그대로 적용된다.
 
 ## 구조
 
