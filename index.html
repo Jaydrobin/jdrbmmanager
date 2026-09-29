@@ -56,7 +56,7 @@
     .btn-primary { background: var(--primary); color: white; }
     .btn-primary:hover { background: var(--primary-hover); }
     .btn-outline { background: var(--card-bg); border: 1px solid var(--border); color: var(--text); }
-    .btn-outline:hover { background: var(--border); }
+    .btn-outline:hover:not(:disabled) { background: var(--border); }
     .btn-icon { padding: 8px 10px; font-size: 1.1rem; }
 
     /* Controls */
@@ -97,6 +97,8 @@
     .badge { display: inline-block; background: var(--badge-bg); color: var(--badge-text); padding: 3px 8px; border-radius: 6px; font-size: 0.75rem; font-weight: 600; }
     .card-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 12px; border-top: 1px solid var(--border); padding-top: 10px; }
     .btn-action { padding: 4px 8px; font-size: 0.75rem; border-radius: 6px; }
+    .btn-action:disabled { opacity: 0.4; cursor: not-allowed; }
+    .move-group { display: flex; gap: 6px; margin-right: auto; }
     .btn-delete { color: var(--danger); background: var(--danger-bg); }
     .btn-delete:hover { filter: brightness(0.9); }
 
@@ -138,8 +140,8 @@
 
 <!-- Modal -->
 <div id="modalOverlay" class="modal-overlay" onclick="handleOverlayClick(event)">
-  <div class="modal">
-    <h2 id="modalTitle">북마크 추가</h2>
+  <form class="modal" id="bookmarkForm" onsubmit="event.preventDefault(); saveBookmark()">
+    <h2 id="modalTitle">새 북마크 추가</h2>
     <input type="hidden" id="editId">
     <div class="form-group">
       <label for="bmTitle">이름 / 사이트명</label>
@@ -147,27 +149,30 @@
     </div>
     <div class="form-group">
       <label for="bmUrl">URL (웹 주소)</label>
-      <input type="url" id="bmUrl" required placeholder="https://example.com">
+      <!-- type="url"은 스킴 없는 주소(example.com)를 막으므로 text로 두고 saveBookmark에서 보정·검증한다 (D-011) -->
+      <input type="text" inputmode="url" id="bmUrl" required placeholder="https://example.com">
     </div>
     <div class="form-group">
       <label for="bmCategory">카테고리</label>
       <input type="text" id="bmCategory" placeholder="예: 업무, 포털, 개발 도구">
     </div>
     <div class="modal-actions">
-      <button class="btn-outline" onclick="closeModal()">취소</button>
-      <button class="btn-primary" onclick="saveBookmark()">저장하기</button>
+      <button type="button" class="btn-outline" onclick="closeModal()">취소</button>
+      <button type="submit" class="btn-primary">저장하기</button>
     </div>
-  </div>
+  </form>
 </div>
 
 <script>
-  const STORAGE_KEY = 'single_file_bookmarks_v2';
+  const STORAGE_KEY = 'single_file_bookmarks_v3';
+  const LEGACY_STORAGE_KEY = 'single_file_bookmarks_v2'; // v0.3 이하 형식 (addedAt 없음)
   const THEME_KEY = 'single_file_bookmarks_theme';
+  const MIN_PLAUSIBLE_TIME = Date.UTC(2000, 0, 1);
 
   const DEFAULT_BOOKMARKS = [
-    { id: 1, title: 'Google', url: 'https://www.google.com', category: '검색' },
-    { id: 2, title: 'GitHub', url: 'https://github.com', category: '개발' },
-    { id: 3, title: 'YouTube', url: 'https://www.youtube.com', category: '미디어' }
+    { id: 1, title: 'Google', url: 'https://www.google.com', category: '검색', addedAt: null },
+    { id: 2, title: 'GitHub', url: 'https://github.com', category: '개발', addedAt: null },
+    { id: 3, title: 'YouTube', url: 'https://www.youtube.com', category: '미디어', addedAt: null }
   ];
 
   let bookmarks = loadBookmarks();
@@ -183,18 +188,28 @@
     }
   }
 
+  function isPlausibleTime(time) {
+    return Number.isSafeInteger(time) && time >= MIN_PLAUSIBLE_TIME && time <= Date.now() + 86400000;
+  }
+
   function normalizeBookmark(item) {
     if (!item || typeof item !== 'object') return null;
     const title = typeof item.title === 'string' ? item.title.trim() : '';
     const url = typeof item.url === 'string' ? item.url.trim() : '';
     if (!title || !isSafeUrl(url)) return null;
 
-    const id = Number(item.id);
+    const rawId = Number(item.id);
+    const id = Number.isSafeInteger(rawId) && rawId > 0 ? rawId : null; // null이면 sanitizeBookmarks에서 새로 발급
+    const addedAt = Number(item.addedAt);
     return {
-      id: Number.isSafeInteger(id) && id > 0 ? id : null, // null이면 sanitizeBookmarks에서 새로 발급
+      id,
       title,
       url,
-      category: typeof item.category === 'string' ? item.category.trim() : ''
+      category: typeof item.category === 'string' ? item.category.trim() : '',
+      // v0.3 이하 데이터에는 addedAt 필드가 없다. 그때는 ID가 생성 시각(Date.now())이었으므로 ID로 추정한다.
+      addedAt: item.addedAt === undefined
+        ? (isPlausibleTime(id) ? id : null)
+        : (isPlausibleTime(addedAt) ? addedAt : null)
     };
   }
 
@@ -202,19 +217,22 @@
     return list.reduce((max, bm) => Math.max(max, bm.id || 0), 0);
   }
 
-  // 잘못된 항목은 버리고, ID가 없거나 잘못된 항목에는 기존 ID와 겹치지 않는 새 ID를 준다.
+  // 잘못된 항목은 버리고, ID가 없거나 이미 쓰인(기존 목록 또는 앞선 항목) ID에는 겹치지 않는 새 ID를 준다.
   function sanitizeBookmarks(list, existing = []) {
     const items = list.map(normalizeBookmark).filter(Boolean);
+    const usedIds = new Set(existing.map(bm => bm.id));
     let nextId = Math.max(Date.now(), maxId(existing) + 1, maxId(items) + 1);
     items.forEach(bm => {
-      if (bm.id === null) bm.id = nextId++;
+      if (bm.id === null || usedIds.has(bm.id)) bm.id = nextId++;
+      usedIds.add(bm.id);
     });
     return items;
   }
 
-  function loadBookmarks() {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved === null) return DEFAULT_BOOKMARKS;
+  // 키가 없으면 null, 손상됐으면 시드 데이터를 돌려준다.
+  function readStoredBookmarks(key) {
+    const saved = localStorage.getItem(key);
+    if (saved === null) return null;
 
     try {
       const parsed = JSON.parse(saved);
@@ -224,27 +242,48 @@
     }
 
     // 손상된 데이터는 다음 저장 때 덮어쓰이기 전에 별도 키에 보관한다.
-    localStorage.setItem(STORAGE_KEY + '_broken', saved);
+    localStorage.setItem(key + '_broken', saved);
+    return DEFAULT_BOOKMARKS;
+  }
+
+  function loadBookmarks() {
+    const current = readStoredBookmarks(STORAGE_KEY);
+    if (current) return current;
+
+    // 이전 형식에서 옮긴다. 되돌아갈 수 있도록 이전 키는 지우지 않는다.
+    const legacy = readStoredBookmarks(LEGACY_STORAGE_KEY);
+    if (legacy) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(legacy));
+      return legacy;
+    }
     return DEFAULT_BOOKMARKS;
   }
 
   /* ------------------- 다크 모드 ------------------- */
-  function initTheme() {
+  // 사용자가 직접 전환하기 전에는 테마를 저장하지 않고 OS 설정을 계속 따른다.
+  function getSavedTheme() {
     const savedTheme = localStorage.getItem(THEME_KEY);
-    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-    const theme = savedTheme ? savedTheme : (prefersDark ? 'dark' : 'light');
-    applyTheme(theme);
+    return savedTheme === 'dark' || savedTheme === 'light' ? savedTheme : null;
+  }
+
+  function initTheme() {
+    const darkQuery = window.matchMedia('(prefers-color-scheme: dark)');
+    applyTheme(getSavedTheme() || (darkQuery.matches ? 'dark' : 'light'));
+    darkQuery.addEventListener('change', (e) => {
+      if (!getSavedTheme()) applyTheme(e.matches ? 'dark' : 'light');
+    });
   }
 
   function applyTheme(theme) {
     document.documentElement.setAttribute('data-theme', theme);
     document.getElementById('themeToggleBtn').textContent = theme === 'dark' ? '☀️' : '🌙';
-    localStorage.setItem(THEME_KEY, theme);
   }
 
   function toggleTheme() {
     const currentTheme = document.documentElement.getAttribute('data-theme');
-    applyTheme(currentTheme === 'dark' ? 'light' : 'dark');
+    const nextTheme = currentTheme === 'dark' ? 'light' : 'dark';
+    applyTheme(nextTheme);
+    localStorage.setItem(THEME_KEY, nextTheme);
   }
 
   /* ---------------- 파비콘 및 렌더링 ---------------- */
@@ -257,25 +296,32 @@
     }
   }
 
-  function renderBookmarks() {
-    const grid = document.getElementById('bookmarkGrid');
+  function getVisibleBookmarks() {
     const search = document.getElementById('searchInput').value.toLowerCase();
     const catFilter = document.getElementById('categoryFilter').value;
 
-    grid.innerHTML = '';
-
-    const filtered = bookmarks.filter(bm => {
+    return bookmarks.filter(bm => {
       const matchSearch = bm.title.toLowerCase().includes(search) || bm.url.toLowerCase().includes(search);
       const matchCat = catFilter === 'all' || bm.category === catFilter;
       return matchSearch && matchCat;
     });
+  }
+
+  function renderBookmarks() {
+    const grid = document.getElementById('bookmarkGrid');
+
+    // 필터링 전에 갱신해야 사라진 카테고리가 선택된 채로 남지 않는다 (없으면 '전체'로 돌아감)
+    updateCategoryOptions();
+    const filtered = getVisibleBookmarks();
+
+    grid.innerHTML = '';
 
     if (filtered.length === 0) {
       grid.innerHTML = `<p style="grid-column: 1/-1; text-align: center; color: var(--text-muted); padding: 48px 0;">북마크가 없습니다.</p>`;
       return;
     }
 
-    filtered.forEach(bm => {
+    filtered.forEach((bm, index) => {
       const card = document.createElement('div');
       card.className = 'card';
       card.setAttribute('draggable', 'true');
@@ -294,12 +340,18 @@
           ${bm.category ? `<span class="badge">${escapeHtml(bm.category)}</span>` : ''}
         </div>
         <div class="card-actions">
+          <div class="move-group">
+            <button class="btn-outline btn-action" data-action="move-prev" title="앞으로 이동" aria-label="앞으로 이동" ${index === 0 ? 'disabled' : ''}>←</button>
+            <button class="btn-outline btn-action" data-action="move-next" title="뒤로 이동" aria-label="뒤로 이동" ${index === filtered.length - 1 ? 'disabled' : ''}>→</button>
+          </div>
           <button class="btn-outline btn-action" data-action="edit">수정</button>
           <button class="btn-delete btn-action" data-action="delete">삭제</button>
         </div>
       `;
 
       // 데이터 값이 코드로 해석되지 않도록 인라인 onclick 대신 클로저로 연결
+      card.querySelector('[data-action="move-prev"]').addEventListener('click', () => moveBookmark(bm.id, -1));
+      card.querySelector('[data-action="move-next"]').addEventListener('click', () => moveBookmark(bm.id, 1));
       card.querySelector('[data-action="edit"]').addEventListener('click', () => editBookmark(bm.id));
       card.querySelector('[data-action="delete"]').addEventListener('click', () => deleteBookmark(bm.id));
 
@@ -307,8 +359,6 @@
       setupDragEvents(card);
       grid.appendChild(card);
     });
-
-    updateCategoryOptions();
   }
 
   /* ---------------- 드래그 앤 드롭 ---------------- */
@@ -357,6 +407,25 @@
     });
   }
 
+  // 드래그를 쓸 수 없는 터치·키보드용. 화면에 보이는(필터된) 이웃 카드 자리로 옮긴다.
+  function moveBookmark(id, direction) {
+    const visible = getVisibleBookmarks();
+    const neighbor = visible[visible.findIndex(bm => bm.id === id) + direction];
+    if (!neighbor) return;
+
+    const fromIndex = bookmarks.findIndex(bm => bm.id === id);
+    const toIndex = bookmarks.findIndex(bm => bm.id === neighbor.id);
+    const [movedItem] = bookmarks.splice(fromIndex, 1);
+    bookmarks.splice(toIndex, 0, movedItem);
+    syncAndRender();
+
+    // 다시 그리면 포커스가 사라지므로 옮긴 카드의 버튼으로 되돌려 연속 이동을 가능하게 한다.
+    const card = document.querySelector(`.card[data-id="${id}"]`);
+    const button = card && (card.querySelector(`[data-action="${direction < 0 ? 'move-prev' : 'move-next'}"]:not(:disabled)`) ||
+      card.querySelector('.move-group button:not(:disabled)'));
+    if (button) button.focus();
+  }
+
   /* ------------- 카테고리 필터 관리 ------------- */
   function updateCategoryOptions() {
     const select = document.getElementById('categoryFilter');
@@ -392,8 +461,13 @@
     if (e.target.id === 'modalOverlay') closeModal();
   }
 
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && document.getElementById('modalOverlay').style.display === 'flex') closeModal();
+  });
+
+  // Enter 저장은 <form>의 submit으로 처리된다.
   function saveBookmark() {
-    const id = document.getElementById('editId').value;
+    const id = Number(document.getElementById('editId').value);
     const title = document.getElementById('bmTitle').value.trim();
     let url = document.getElementById('bmUrl').value.trim();
     const category = document.getElementById('bmCategory').value.trim();
@@ -413,11 +487,11 @@
     }
 
     if (id) {
-      const idx = bookmarks.findIndex(bm => bm.id == id);
-      if (idx !== -1) bookmarks[idx] = { id: Number(id), title, url, category };
+      const idx = bookmarks.findIndex(bm => bm.id === id);
+      if (idx !== -1) bookmarks[idx] = { ...bookmarks[idx], title, url, category };
     } else {
       // 신규 북마크는 최상단에 추가. 가져온 ID가 현재 시각보다 클 수 있어 최대값 이후로 발급
-      bookmarks.unshift({ id: Math.max(Date.now(), maxId(bookmarks) + 1), title, url, category });
+      bookmarks.unshift({ id: Math.max(Date.now(), maxId(bookmarks) + 1), title, url, category, addedAt: Date.now() });
     }
 
     syncAndRender();
@@ -468,22 +542,27 @@
       groups[cat].push(bm);
     });
 
+    // 폴더는 앱에 없는 개념이라 내보낸 시각을 쓰고, 북마크는 추가 시각을 알 때만 ADD_DATE를 넣는다.
     for (const [category, items] of Object.entries(groups)) {
       htmlContent += `    <DT><H3 ADD_DATE="${now}" LAST_MODIFIED="${now}">${escapeHtml(category)}</H3>\n    <DL><p>\n`;
       items.forEach(bm => {
-        htmlContent += `        <DT><A HREF="${escapeHtml(bm.url)}" ADD_DATE="${now}">${escapeHtml(bm.title)}</A>\n`;
+        const addDate = bm.addedAt ? ` ADD_DATE="${Math.floor(bm.addedAt / 1000)}"` : '';
+        htmlContent += `        <DT><A HREF="${escapeHtml(bm.url)}"${addDate}>${escapeHtml(bm.title)}</A>\n`;
       });
       htmlContent += `    </DL><p>\n`;
     }
 
     htmlContent += `</DL><p>\n`;
 
-    // 다운로드 트리거
-    const blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8' });
+    downloadFile(htmlContent, 'text/html;charset=utf-8', `bookmarks_${new Date().toISOString().slice(0, 10)}.html`);
+  }
+
+  function downloadFile(content, type, filename) {
+    const blob = new Blob([content], { type });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `bookmarks_${new Date().toISOString().slice(0, 10)}.html`;
+    a.download = filename;
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -492,15 +571,8 @@
 
   /* ------------ JSON 백업 / 복구 ------------ */
   function exportJSON() {
-    const blob = new Blob([JSON.stringify(bookmarks, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `bookmarks_backup_${new Date().toISOString().slice(0, 10)}.json`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
+    downloadFile(JSON.stringify(bookmarks, null, 2), 'application/json',
+      `bookmarks_backup_${new Date().toISOString().slice(0, 10)}.json`);
   }
 
   function importJSON(event) {
@@ -516,7 +588,7 @@
           return;
         }
 
-        const valid = sanitizeBookmarks(imported, bookmarks);
+        let valid = sanitizeBookmarks(imported);
         if (valid.length === 0) {
           alert('불러올 수 있는 북마크가 없습니다.\n(제목과 http/https 주소가 있는 항목만 불러옵니다.)');
           return;
@@ -525,6 +597,8 @@
         if (confirm('기존 데이터를 덮어쓰시겠습니까?\n[확인] 전체 덮어쓰기 / [취소] 기존 목록에 병합')) {
           bookmarks = valid;
         } else {
+          // 병합할 때만 기존 ID와 겹치는 항목에 새 ID를 준다.
+          valid = sanitizeBookmarks(imported, bookmarks);
           bookmarks = [...valid, ...bookmarks];
         }
         syncAndRender();
