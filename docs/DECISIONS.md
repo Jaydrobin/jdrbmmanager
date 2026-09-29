@@ -148,12 +148,12 @@
 
 | # | 심각도 | 문제 | 위치 | 상태 |
 |---|---|---|---|---|
-| K-01 | 높음 | 카드 링크의 `href="${bm.url}"`에 이스케이프가 없음. URL에 `"`가 들어가면 속성이 끊겨 임의 속성(예: `onmouseover`)이 주입됨. 모달 입력만으로도 가능 | `index.html:232` | 미해결 |
-| K-02 | 높음 | JSON 복구 데이터의 `id`가 `onclick="editBookmark(${bm.id})"`에 그대로 들어가 스크립트로 실행될 수 있음 | `index.html:239-240` | 미해결 |
-| K-03 | 높음 | JSON 복구 시 URL 스킴을 검사하지 않아 `javascript:` 링크가 저장됨 | `importJSON` | 미해결 |
-| K-04 | 높음 | 복구한 항목의 구조를 검사하지 않음. `title`/`url`이 없거나 문자열이 아니면 렌더링 중 예외가 나고, 이미 저장된 뒤라 새로고침해도 계속 빈 화면. `localStorage` 값이 깨진 경우도 시작 시 예외 | `importJSON`, `index.html:167` | 미해결 |
+| K-01 | 높음 | 카드 링크의 `href="${bm.url}"`에 이스케이프가 없음. URL에 `"`가 들어가면 속성이 끊겨 임의 속성(예: `onmouseover`)이 주입됨. 모달 입력만으로도 가능 | `index.html:232` | 해결 (a1e6456) |
+| K-02 | 높음 | JSON 복구 데이터의 `id`가 `onclick="editBookmark(${bm.id})"`에 그대로 들어가 스크립트로 실행될 수 있음 | `index.html:239-240` | 해결 (a1e6456) |
+| K-03 | 높음 | JSON 복구 시 URL 스킴을 검사하지 않아 `javascript:` 링크가 저장됨 | `importJSON` | 해결 (a1e6456) |
+| K-04 | 높음 | 복구한 항목의 구조를 검사하지 않음. `title`/`url`이 없거나 문자열이 아니면 렌더링 중 예외가 나고, 이미 저장된 뒤라 새로고침해도 계속 빈 화면. `localStorage` 값이 깨진 경우도 시작 시 예외 | `importJSON`, `index.html:167` | 해결 (a1e6456) |
 | K-05 | 중간 | 병합 시 ID 중복을 막지 않음. 같은 백업을 두 번 병합하면 삭제 시 두 항목이 함께 사라지고, 수정·이동은 첫 항목에만 적용 | `importJSON` | 미해결 |
-| K-06 | 중간 | 문자열 ID(외부 JSON)는 `===` 비교와 `Number()` 변환 때문에 수정·삭제·드래그가 동작하지 않음 | `editBookmark`, `deleteBookmark`, `setupDragEvents` | 해결 (D-014 ID 정규화에 포함) |
+| K-06 | 중간 | 문자열 ID(외부 JSON)는 `===` 비교와 `Number()` 변환 때문에 수정·삭제·드래그가 동작하지 않음 | `editBookmark`, `deleteBookmark`, `setupDragEvents` | 해결 (a1e6456, D-014 ID 정규화) |
 | K-07 | 중간 | 필터 결과가 비면 `updateCategoryOptions` 전에 `return`해서 카테고리 목록이 갱신되지 않음 (예: 필터 중 마지막 항목 삭제 시 없어진 카테고리가 남음) | `renderBookmarks` | 미해결 |
 | K-08 | 낮음 | 첫 방문 때 OS 테마를 저장해 버려 이후 OS 설정 변경을 따르지 않음 | `initTheme` → `applyTheme` | 미해결 |
 | K-09 | 낮음 | 모달에서 Esc로 닫기, Enter로 저장이 안 됨. `<form>`이 없어 `required`·`type="url"` 검증이 동작하지 않음 | 모달 마크업 | 미해결 |
