@@ -10,13 +10,14 @@
 
 | 구역 주석 | 내용 |
 |---|---|
-| (상단 상수) | `STORAGE_KEY`, `THEME_KEY`, 시드 데이터로 `bookmarks` 초기화 |
-| `다크 모드` | `initTheme` / `applyTheme` / `toggleTheme` |
-| `파비콘 및 렌더링` | `getFaviconUrl`, `renderBookmarks` (그리드 전체 재생성) |
-| `드래그 앤 드롭` | `setupDragEvents` |
+| (상단 상수) | `STORAGE_KEY`(v3), `LEGACY_STORAGE_KEY`(v2), `THEME_KEY`, 시드 데이터로 `bookmarks` 초기화 |
+| `데이터 검증 및 불러오기` | `isSafeUrl`, `normalizeBookmark`, `sanitizeBookmarks`, `loadBookmarks` (v2 → v3 마이그레이션) |
+| `다크 모드` | `initTheme` / `applyTheme` / `toggleTheme` (저장은 `toggleTheme`에서만) |
+| `파비콘 및 렌더링` | `getFaviconUrl`, `getVisibleBookmarks`(검색·필터), `renderBookmarks` (그리드 전체 재생성) |
+| `드래그 앤 드롭` | `setupDragEvents`, `moveBookmark` (이동 버튼) |
 | `카테고리 필터 관리` | `updateCategoryOptions` |
-| `모달 및 CRUD` | 모달 열기/닫기, `saveBookmark`, `editBookmark`, `deleteBookmark`, `syncAndRender` |
-| `HTML 북마크 내보내기` | `exportHTML` (Netscape 형식) |
+| `모달 및 CRUD` | 모달 열기/닫기, Esc 처리, `saveBookmark`(`<form>` submit), `editBookmark`, `deleteBookmark`, `syncAndRender` |
+| `HTML 북마크 내보내기` | `exportHTML` (Netscape 형식), `downloadFile` |
 | `JSON 백업 / 복구` | `exportJSON`, `importJSON`, `escapeHtml` |
 
 ## 작성 규약
@@ -73,14 +74,15 @@
 개발자 도구에서 `localStorage.clear()` 후 새로고침해 깨끗한 상태로 시작한다.
 
 1. 시드 북마크 3개가 보인다.
-2. 추가: `example.com` 입력 → `https://example.com`으로 저장, 목록 맨 앞에 나타남.
+2. 추가: `example.com` 입력 후 Enter → `https://example.com`으로 저장, 목록 맨 앞에 나타남. 빈 칸으로 Enter → 저장되지 않음. Esc → 모달이 닫힘.
 3. 수정 → 값이 바뀜. 삭제 → 확인 후 사라짐.
-4. 검색(제목·URL), 카테고리 필터가 동작한다.
-5. 드래그로 순서 변경 → 새로고침 후에도 유지. 필터 중 드래그도 확인.
-6. 테마 전환 → 새로고침 후에도 유지.
-7. HTML 내보내기 → 크롬 등에서 가져오면 카테고리가 폴더로 보인다.
-8. JSON 백업 → 복구: [확인]은 덮어쓰기, [취소]는 병합.
+4. 검색(제목·URL), 카테고리 필터가 동작한다. 필터 중 그 카테고리의 마지막 항목을 지우면 필터가 '전체'로 돌아간다.
+5. 드래그와 [←]/[→] 버튼으로 순서 변경 → 새로고침 후에도 유지. 필터 중 이동도 확인.
+6. 테마: 전환하기 전에는 OS 설정을 따르고 저장하지 않는다. 전환 → 새로고침 후에도 유지.
+7. HTML 내보내기 → 크롬 등에서 가져오면 카테고리가 폴더로 보이고, 새로 추가한 북마크의 추가 시각이 맞다.
+8. JSON 백업 → 복구: [확인]은 덮어쓰기, [취소]는 병합. 같은 파일을 두 번 병합한 뒤 하나를 지워도 하나만 사라진다.
 9. 잘못된 파일(배열 아닌 JSON, 텍스트 파일) 복구 → 오류 알림 후 앱이 정상 동작.
+10. 마이그레이션: `single_file_bookmarks_v2`에만 데이터를 넣고 새로고침 → 같은 목록이 보이고 v3 키가 생긴다.
 
 ### 3. 보고 형식
 문제마다 다음을 적는다. 이번에 고치지 않는 문제는 DECISIONS.md 5장에 추가한다.
