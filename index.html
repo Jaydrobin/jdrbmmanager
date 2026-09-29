@@ -164,11 +164,69 @@
   const STORAGE_KEY = 'single_file_bookmarks_v2';
   const THEME_KEY = 'single_file_bookmarks_theme';
 
-  let bookmarks = JSON.parse(localStorage.getItem(STORAGE_KEY)) || [
+  const DEFAULT_BOOKMARKS = [
     { id: 1, title: 'Google', url: 'https://www.google.com', category: '검색' },
     { id: 2, title: 'GitHub', url: 'https://github.com', category: '개발' },
     { id: 3, title: 'YouTube', url: 'https://www.youtube.com', category: '미디어' }
   ];
+
+  let bookmarks = loadBookmarks();
+
+  /* ------------- 데이터 검증 및 불러오기 ------------- */
+  // localStorage와 가져온 JSON은 모두 외부 입력으로 보고 여기서 검증한다.
+  function isSafeUrl(url) {
+    try {
+      const protocol = new URL(url).protocol;
+      return protocol === 'http:' || protocol === 'https:';
+    } catch {
+      return false;
+    }
+  }
+
+  function normalizeBookmark(item) {
+    if (!item || typeof item !== 'object') return null;
+    const title = typeof item.title === 'string' ? item.title.trim() : '';
+    const url = typeof item.url === 'string' ? item.url.trim() : '';
+    if (!title || !isSafeUrl(url)) return null;
+
+    const id = Number(item.id);
+    return {
+      id: Number.isSafeInteger(id) && id > 0 ? id : null, // null이면 sanitizeBookmarks에서 새로 발급
+      title,
+      url,
+      category: typeof item.category === 'string' ? item.category.trim() : ''
+    };
+  }
+
+  function maxId(list) {
+    return list.reduce((max, bm) => Math.max(max, bm.id || 0), 0);
+  }
+
+  // 잘못된 항목은 버리고, ID가 없거나 잘못된 항목에는 기존 ID와 겹치지 않는 새 ID를 준다.
+  function sanitizeBookmarks(list, existing = []) {
+    const items = list.map(normalizeBookmark).filter(Boolean);
+    let nextId = Math.max(Date.now(), maxId(existing) + 1, maxId(items) + 1);
+    items.forEach(bm => {
+      if (bm.id === null) bm.id = nextId++;
+    });
+    return items;
+  }
+
+  function loadBookmarks() {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved === null) return DEFAULT_BOOKMARKS;
+
+    try {
+      const parsed = JSON.parse(saved);
+      if (Array.isArray(parsed)) return sanitizeBookmarks(parsed);
+    } catch {
+      // 아래에서 처리
+    }
+
+    // 손상된 데이터는 다음 저장 때 덮어쓰이기 전에 별도 키에 보관한다.
+    localStorage.setItem(STORAGE_KEY + '_broken', saved);
+    return DEFAULT_BOOKMARKS;
+  }
 
   /* ------------------- 다크 모드 ------------------- */
   function initTheme() {
@@ -227,19 +285,23 @@
         <div>
           <div class="card-top">
             <span class="drag-handle" title="드래그하여 순서 변경">⋮⋮</span>
-            <img class="favicon" src="${getFaviconUrl(bm.url)}" onerror="this.style.display='none'" alt="">
+            <img class="favicon" src="${escapeHtml(getFaviconUrl(bm.url))}" onerror="this.style.display='none'" alt="">
             <div class="title-wrapper">
-              <a href="${bm.url}" target="_blank" rel="noopener noreferrer" class="card-title" title="${escapeHtml(bm.title)}">${escapeHtml(bm.title)}</a>
+              <a href="${escapeHtml(bm.url)}" target="_blank" rel="noopener noreferrer" class="card-title" title="${escapeHtml(bm.title)}">${escapeHtml(bm.title)}</a>
             </div>
           </div>
           <div class="card-url" title="${escapeHtml(bm.url)}">${escapeHtml(bm.url)}</div>
           ${bm.category ? `<span class="badge">${escapeHtml(bm.category)}</span>` : ''}
         </div>
         <div class="card-actions">
-          <button class="btn-outline btn-action" onclick="editBookmark(${bm.id})">수정</button>
-          <button class="btn-delete btn-action" onclick="deleteBookmark(${bm.id})">삭제</button>
+          <button class="btn-outline btn-action" data-action="edit">수정</button>
+          <button class="btn-delete btn-action" data-action="delete">삭제</button>
         </div>
       `;
+
+      // 데이터 값이 코드로 해석되지 않도록 인라인 onclick 대신 클로저로 연결
+      card.querySelector('[data-action="edit"]').addEventListener('click', () => editBookmark(bm.id));
+      card.querySelector('[data-action="delete"]').addEventListener('click', () => deleteBookmark(bm.id));
 
       // 드래그 앤 드롭 이벤트 연결
       setupDragEvents(card);
@@ -345,12 +407,17 @@
       url = 'https://' + url;
     }
 
+    if (!isSafeUrl(url)) {
+      alert('올바른 웹 주소(URL)가 아닙니다.');
+      return;
+    }
+
     if (id) {
       const idx = bookmarks.findIndex(bm => bm.id == id);
       if (idx !== -1) bookmarks[idx] = { id: Number(id), title, url, category };
     } else {
-      // 신규 북마크는 최상단에 추가
-      bookmarks.unshift({ id: Date.now(), title, url, category });
+      // 신규 북마크는 최상단에 추가. 가져온 ID가 현재 시각보다 클 수 있어 최대값 이후로 발급
+      bookmarks.unshift({ id: Math.max(Date.now(), maxId(bookmarks) + 1), title, url, category });
     }
 
     syncAndRender();
@@ -444,17 +511,27 @@
     reader.onload = function(e) {
       try {
         const imported = JSON.parse(e.target.result);
-        if (Array.isArray(imported)) {
-          if (confirm('기존 데이터를 덮어쓰시겠습니까?\n[확인] 전체 덮어쓰기 / [취소] 기존 목록에 병합')) {
-            bookmarks = imported;
-          } else {
-            bookmarks = [...imported, ...bookmarks];
-          }
-          syncAndRender();
-          alert('북마크 데이터를 성공적으로 불러왔습니다.');
-        } else {
+        if (!Array.isArray(imported)) {
           alert('올바른 JSON 데이터 형식이 아닙니다.');
+          return;
         }
+
+        const valid = sanitizeBookmarks(imported, bookmarks);
+        if (valid.length === 0) {
+          alert('불러올 수 있는 북마크가 없습니다.\n(제목과 http/https 주소가 있는 항목만 불러옵니다.)');
+          return;
+        }
+
+        if (confirm('기존 데이터를 덮어쓰시겠습니까?\n[확인] 전체 덮어쓰기 / [취소] 기존 목록에 병합')) {
+          bookmarks = valid;
+        } else {
+          bookmarks = [...valid, ...bookmarks];
+        }
+        syncAndRender();
+
+        const skipped = imported.length - valid.length;
+        alert(`북마크 ${valid.length}개를 불러왔습니다.` +
+          (skipped > 0 ? `\n형식이 잘못된 ${skipped}개 항목은 건너뛰었습니다.` : ''));
       } catch (err) {
         alert('파일을 읽는 도중 오류가 발생했습니다.');
       }
