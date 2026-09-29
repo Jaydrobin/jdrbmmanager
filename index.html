@@ -50,6 +50,9 @@
     header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; flex-wrap: wrap; gap: 12px; }
     h1 { font-size: 1.5rem; display: flex; align-items: center; gap: 8px; font-weight: 700; }
     .btn-group { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .account-label { font-size: 0.8rem; color: var(--text-muted); max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    /* button의 display 지정이 hidden 속성을 덮지 않도록 */
+    [hidden] { display: none !important; }
 
     /* Buttons */
     button { cursor: pointer; border: none; border-radius: 8px; padding: 8px 14px; font-weight: 500; font-size: 0.85rem; display: inline-flex; align-items: center; gap: 6px; }
@@ -119,6 +122,9 @@
   <header>
     <h1>🔖 북마크 매니저</h1>
     <div class="btn-group">
+      <span id="accountLabel" class="account-label" hidden></span>
+      <!-- Firebase를 불러온 뒤에만 보인다 (로컬 모드에서는 숨김) -->
+      <button class="btn-outline" id="authBtn" onclick="toggleAuth()" hidden>🔑 로그인</button>
       <button class="btn-outline btn-icon" id="themeToggleBtn" onclick="toggleTheme()" title="테마 전환">🌙</button>
       <button class="btn-outline" onclick="exportHTML()" title="브라우저에서 바로 가져올 수 있는 HTML로 내보내기">🌐 HTML 내보내기</button>
       <button class="btn-outline" onclick="exportJSON()" title="전체 백업 JSON 다운로드">💾 JSON 백업</button>
@@ -150,11 +156,11 @@
     <div class="form-group">
       <label for="bmUrl">URL (웹 주소)</label>
       <!-- type="url"은 스킴 없는 주소(example.com)를 막으므로 text로 두고 saveBookmark에서 보정·검증한다 (D-011) -->
-      <input type="text" inputmode="url" id="bmUrl" required placeholder="https://example.com">
+      <input type="text" inputmode="url" id="bmUrl" required maxlength="2048" placeholder="https://example.com">
     </div>
     <div class="form-group">
       <label for="bmCategory">카테고리</label>
-      <input type="text" id="bmCategory" placeholder="예: 업무, 포털, 개발 도구">
+      <input type="text" id="bmCategory" maxlength="100" placeholder="예: 업무, 포털, 개발 도구">
     </div>
     <div class="modal-actions">
       <button type="button" class="btn-outline" onclick="closeModal()">취소</button>
@@ -168,7 +174,23 @@
   const LEGACY_STORAGE_KEY = 'single_file_bookmarks_v2'; // v0.3 이하 형식 (addedAt 없음)
   const THEME_KEY = 'single_file_bookmarks_theme';
   const MIN_PLAUSIBLE_TIME = Date.UTC(2000, 0, 1);
-  const MAX_TITLE_LENGTH = 500; // Firestore 규칙과 같은 제한 (SYNC-DESIGN.md 3.4)
+  // Firestore 규칙(firestore.rules)과 같은 제한. 다르면 앱에서는 저장됐는데 서버가 거부한다.
+  const MAX_TITLE_LENGTH = 500;
+  const MAX_URL_LENGTH = 2048;
+  const MAX_CATEGORY_LENGTH = 100;
+  const MIGRATED_KEY_PREFIX = 'single_file_bookmarks_migrated_'; // + uid. 첫 로그인 이전을 물었는지
+
+  // 공개돼도 되는 값이다(비밀 키 아님). 데이터는 보안 규칙과 승인된 도메인으로 보호한다.
+  const FIREBASE_CONFIG = {
+    apiKey: 'AIzaSyCIJO3SO5JDv7TNP2PIcu1O601zR45Pl60',
+    authDomain: 'jdrbmmanager.firebaseapp.com',
+    projectId: 'jdrbmmanager',
+    storageBucket: 'jdrbmmanager.firebasestorage.app',
+    messagingSenderId: '423101234193',
+    appId: '1:423101234193:web:0c2c371bc1513695bf85b0'
+  };
+  // 버전을 고정한다. 올릴 때는 세 파일이 같은 버전이어야 한다.
+  const FIREBASE_SDK_URL = 'https://www.gstatic.com/firebasejs/12.19.0/';
 
   const DEFAULT_BOOKMARKS = [
     { id: 1, title: 'Google', url: 'https://www.google.com', category: '검색', addedAt: null },
@@ -194,19 +216,20 @@
     return Number.isSafeInteger(time) && time >= MIN_PLAUSIBLE_TIME && time <= Date.now() + 86400000;
   }
 
-  // 넘는 제목은 버리지 않고 자른다 (기존 데이터를 잃지 않도록).
-  function truncateTitle(title) {
-    if (title.length <= MAX_TITLE_LENGTH) return title;
-    const cut = title.slice(0, MAX_TITLE_LENGTH);
+  // 넘는 제목·카테고리는 항목을 버리지 않고 자른다 (기존 데이터를 잃지 않도록).
+  function truncateText(text, maxLength) {
+    if (text.length <= maxLength) return text;
+    const cut = text.slice(0, maxLength);
     // 서로게이트 쌍(이모지 등) 가운데에서 잘리지 않게 한다.
     return /[\uD800-\uDBFF]$/.test(cut) ? cut.slice(0, -1) : cut;
   }
 
   function normalizeBookmark(item) {
     if (!item || typeof item !== 'object') return null;
-    const title = typeof item.title === 'string' ? truncateTitle(item.title.trim()) : '';
+    const title = typeof item.title === 'string' ? truncateText(item.title.trim(), MAX_TITLE_LENGTH) : '';
     const url = typeof item.url === 'string' ? item.url.trim() : '';
-    if (!title || !isSafeUrl(url)) return null;
+    // 주소는 자르면 다른 주소가 되므로 너무 길면 항목을 버린다.
+    if (!title || !isSafeUrl(url) || url.length > MAX_URL_LENGTH) return null;
 
     const rawId = Number(item.id);
     const id = Number.isSafeInteger(rawId) && rawId > 0 ? rawId : null; // null이면 sanitizeBookmarks에서 새로 발급
@@ -215,7 +238,7 @@
       id,
       title,
       url,
-      category: typeof item.category === 'string' ? item.category.trim() : '',
+      category: typeof item.category === 'string' ? truncateText(item.category.trim(), MAX_CATEGORY_LENGTH) : '',
       // v0.3 이하 데이터에는 addedAt 필드가 없다. 그때는 ID가 생성 시각(Date.now())이었으므로 ID로 추정한다.
       addedAt: item.addedAt === undefined
         ? (isPlausibleTime(id) ? id : null)
@@ -259,7 +282,12 @@
 
     // 손상된 데이터는 다음 저장 때 덮어쓰이기 전에 별도 키에 보관한다.
     localStorage.setItem(key + '_broken', saved);
-    return DEFAULT_BOOKMARKS;
+    return copyDefaultBookmarks();
+  }
+
+  // 작업 함수가 bookmarks 배열을 직접 바꾸므로 시드 상수를 그대로 넘기면 상수가 바뀐다 (K-15).
+  function copyDefaultBookmarks() {
+    return DEFAULT_BOOKMARKS.map(bm => ({ ...bm }));
   }
 
   function loadBookmarks() {
@@ -272,7 +300,7 @@
       localStorage.setItem(STORAGE_KEY, JSON.stringify(legacy));
       return legacy;
     }
-    return DEFAULT_BOOKMARKS;
+    return copyDefaultBookmarks();
   }
 
   /* ------------- 저장소 및 상태 작업 ------------- */
@@ -328,6 +356,296 @@
     bookmarks = [...list, ...bookmarks];
     renderBookmarks();
     store.mergeAll(list);
+  }
+
+  /* ------------- 로그인 및 클라우드 동기화 ------------- */
+  // 로그인하면 store를 CloudStore로 바꾸고 Firestore 목록을 보여 준다. 로그아웃하면 localStorage의 로컬 목록으로 돌아간다.
+  // file://로 열었거나 Firebase를 불러오지 못하면 로그인 버튼 없이 로컬 모드로만 동작한다 (SYNC-DESIGN.md 3.3).
+  const ORDER_GAP = 1024;
+  const MIN_ORDER_GAP = 1e-6;
+  const MAX_BATCH_WRITES = 500;
+
+  let firebase = null; // { app, auth, authApi, fs }
+  let cloud = null;    // 로그인 중일 때 { uid, db, unsubscribe, migrationChecked }
+  let lastWriteErrorAt = 0;
+
+  async function initCloud() {
+    if (location.protocol !== 'http:' && location.protocol !== 'https:') return;
+    try {
+      // 정적 import는 실패하면 스크립트 전체가 멈추므로 동적 import로 불러온다.
+      const [appApi, authApi, fs] = await Promise.all(
+        ['firebase-app.js', 'firebase-auth.js', 'firebase-firestore.js'].map(file => import(FIREBASE_SDK_URL + file)));
+      const app = appApi.initializeApp(FIREBASE_CONFIG);
+      firebase = { app, auth: authApi.getAuth(app), authApi, fs };
+    } catch (err) {
+      console.warn('Firebase를 불러오지 못해 로컬 모드로 동작합니다.', err);
+      return;
+    }
+    // 리디렉트 로그인은 앱 주소가 authDomain과 같을 때만 쓴다 (SYNC-DESIGN.md 3.7).
+    if (location.hostname === FIREBASE_CONFIG.authDomain) {
+      firebase.authApi.getRedirectResult(firebase.auth).catch(err => console.warn(err));
+    }
+    firebase.authApi.onAuthStateChanged(firebase.auth, handleAuthChange);
+  }
+
+  function handleAuthChange(user) {
+    if (cloud && (!user || user.uid !== cloud.uid)) leaveCloudMode();
+    if (user && !cloud) enterCloudMode(user);
+    updateAuthUi(user);
+  }
+
+  function updateAuthUi(user) {
+    const label = document.getElementById('accountLabel');
+    const button = document.getElementById('authBtn');
+    label.textContent = user ? (user.email || user.displayName || '') : '';
+    label.title = label.textContent;
+    label.hidden = !user;
+    button.textContent = user ? '로그아웃' : '🔑 로그인';
+    button.title = user ? '로그아웃하면 이 기기의 로컬 목록으로 돌아갑니다' : 'Google 계정으로 로그인해 여러 기기에서 동기화';
+    button.hidden = false;
+  }
+
+  function toggleAuth() {
+    if (!firebase) return;
+    if (cloud) logout();
+    else login();
+  }
+
+  async function login() {
+    const { authApi, auth } = firebase;
+    const provider = new authApi.GoogleAuthProvider();
+    provider.setCustomParameters({ prompt: 'select_account' });
+    try {
+      await authApi.signInWithPopup(auth, provider);
+    } catch (err) {
+      if (err.code === 'auth/popup-closed-by-user' || err.code === 'auth/cancelled-popup-request') return;
+      if (err.code === 'auth/popup-blocked' && location.hostname === FIREBASE_CONFIG.authDomain) {
+        authApi.signInWithRedirect(auth, provider);
+        return;
+      }
+      alert(err.code === 'auth/popup-blocked'
+        ? '로그인 창이 차단됐습니다. 브라우저에서 이 사이트의 팝업을 허용해 주세요.'
+        : `로그인하지 못했습니다.\n(${err.code || err.message})`);
+    }
+  }
+
+  // 로그아웃하면 클라우드 캐시를 지우므로, 아직 올라가지 않은 변경이 있으면 먼저 묻는다.
+  async function logout() {
+    const button = document.getElementById('authBtn');
+    button.disabled = true;
+    const synced = await Promise.race([
+      firebase.fs.waitForPendingWrites(cloud.db).then(() => true, () => true),
+      new Promise(resolve => setTimeout(() => resolve(false), 3000))
+    ]);
+    button.disabled = false;
+    if (!synced && !confirm('아직 서버에 올라가지 않은 변경이 있습니다 (오프라인일 수 있음).\n로그아웃하면 이 변경은 사라집니다. 계속할까요?')) return;
+    firebase.authApi.signOut(firebase.auth);
+  }
+
+  function enterCloudMode(user) {
+    const { fs } = firebase;
+    // 오프라인에서도 읽고 쓸 수 있도록 IndexedDB 캐시를 쓴다. 여러 탭에서 열어도 된다.
+    const db = fs.initializeFirestore(firebase.app, {
+      localCache: fs.persistentLocalCache({ tabManager: fs.persistentMultipleTabManager() })
+    });
+    const session = { uid: user.uid, db, unsubscribe: null, migrationChecked: false };
+    const cloudStore = createCloudStore(db, user.uid);
+    cloud = session;
+    store = cloudStore;
+    // 첫 스냅샷 전에 로컬 목록을 조작해 클라우드에 쓰지 않도록 비워 둔다.
+    bookmarks = [];
+    renderBookmarks();
+
+    session.unsubscribe = fs.onSnapshot(cloudStore.query, { includeMetadataChanges: true }, snapshot => {
+      const list = cloudStore.fromSnapshot(snapshot);
+      // 내 기기의 쓰기는 이미 화면에 반영돼 있다. 같으면 다시 그리지 않아야 이동 버튼의 포커스가 유지된다.
+      if (JSON.stringify(list) !== JSON.stringify(bookmarks)) {
+        bookmarks = list;
+        renderBookmarks();
+      }
+      // 서버 목록을 받은 뒤에야 클라우드가 비었는지 알 수 있다.
+      if (!snapshot.metadata.fromCache && !session.migrationChecked) {
+        session.migrationChecked = true;
+        offerLocalMigration(user.uid);
+      }
+    }, err => {
+      console.error(err);
+      alert(err.code === 'permission-denied'
+        ? '이 계정은 북마크 데이터에 접근할 수 없습니다.\n(허용된 계정이 아니거나 보안 규칙이 게시되지 않았습니다.)\n로그아웃합니다.'
+        : `클라우드 목록을 불러오지 못했습니다. 로그아웃합니다.\n(${err.code || err.message})`);
+      firebase.authApi.signOut(firebase.auth);
+    });
+  }
+
+  function leaveCloudMode() {
+    const { fs } = firebase;
+    const { db, unsubscribe } = cloud;
+    unsubscribe();
+    cloud = null;
+    store = createLocalStore();
+    bookmarks = loadBookmarks();
+    renderBookmarks();
+    // 로그아웃하면 이 기기의 클라우드 캐시를 지운다 (SYNC-DESIGN.md 3.3). 앱이 다른 탭에도 열려 있으면 실패할 수 있다.
+    fs.terminate(db)
+      .then(() => fs.clearIndexedDbPersistence(db))
+      .catch(err => console.warn('클라우드 캐시를 지우지 못했습니다.', err));
+  }
+
+  // 첫 로그인 때 이 기기의 로컬 목록을 계정에 올릴지 기기마다 한 번 묻는다 (SYNC-DESIGN.md 3.11).
+  function offerLocalMigration(uid) {
+    const key = MIGRATED_KEY_PREFIX + uid;
+    if (localStorage.getItem(key)) return;
+    // 묻기 전에 기록해 여러 탭에서 함께 묻지 않게 한다.
+    localStorage.setItem(key, String(Date.now()));
+
+    const local = loadBookmarks();
+    if (local.length === 0 || isSeedOnly(local)) return;
+    const question = bookmarks.length === 0
+      ? `이 기기의 북마크 ${local.length}개를 계정에 올릴까요?`
+      : `이 기기의 북마크 ${local.length}개를 계정 목록에 합칠까요?`;
+    if (confirm(question + '\n(이 기기의 로컬 목록은 지워지지 않습니다.)')) {
+      mergeAll(sanitizeBookmarks(local, bookmarks));
+    }
+  }
+
+  function isSeedOnly(list) {
+    return list.length === DEFAULT_BOOKMARKS.length && list.every(bm =>
+      DEFAULT_BOOKMARKS.some(seed => seed.id === bm.id && seed.title === bm.title && seed.url === bm.url));
+  }
+
+  function reportWriteError(err) {
+    console.error(err);
+    // 한 작업이 여러 배치로 나뉘어 실패해도 알림은 한 번만 띄운다.
+    if (Date.now() - lastWriteErrorAt < 5000) return;
+    lastWriteErrorAt = Date.now();
+    alert(`클라우드에 저장하지 못했습니다. 화면의 변경이 되돌려질 수 있습니다.\n(${err.code || err.message})`);
+  }
+
+  // 경로 users/{uid}/bookmarks/{id}. 순서는 order 필드로 저장해 이동 한 번에 문서 하나만 쓴다 (SYNC-DESIGN.md 3.4).
+  function createCloudStore(db, uid) {
+    const { fs } = firebase;
+    const collectionRef = fs.collection(db, 'users', uid, 'bookmarks');
+    const orders = new Map(); // id → order. 스냅샷과 내 쓰기로 갱신한다.
+
+    function docRef(id) {
+      return fs.doc(collectionRef, String(id));
+    }
+
+    function toDoc(bm, order) {
+      return { title: bm.title, url: bm.url, category: bm.category, addedAt: bm.addedAt, order, updatedAt: fs.serverTimestamp() };
+    }
+
+    function minOrder() {
+      return orders.size ? Math.min(...orders.values()) : 0;
+    }
+
+    // 오프라인에서는 서버가 받을 때까지 끝나지 않으므로 기다리지 않고 오류만 받는다.
+    function track(promise) {
+      promise.catch(reportWriteError);
+    }
+
+    // 다른 기기에서 지운 북마크를 고치거나 옮기면, 일부 필드만 보낸 쓰기라 규칙이 먼저 거부한다(permission-denied).
+    // 서버에 문서가 정말 없으면 삭제가 이긴 것이므로 알리지 않는다 (SYNC-DESIGN.md 3.6).
+    function trackUpdate(ref, promise) {
+      promise.catch(err => {
+        if (err.code !== 'permission-denied' && err.code !== 'not-found') return reportWriteError(err);
+        fs.getDocFromServer(ref)
+          .then(snap => snap.exists() ? reportWriteError(err) : console.warn('이미 삭제된 북마크라 변경을 버렸습니다.', err))
+          .catch(() => reportWriteError(err));
+      });
+    }
+
+    function commitInBatches(ops) {
+      for (let i = 0; i < ops.length; i += MAX_BATCH_WRITES) {
+        const batch = fs.writeBatch(db);
+        ops.slice(i, i + MAX_BATCH_WRITES).forEach(op => op(batch));
+        track(batch.commit());
+      }
+    }
+
+    function setAll(list, firstOrder) {
+      return list.map((bm, i) => {
+        const order = firstOrder + i * ORDER_GAP;
+        orders.set(bm.id, order);
+        return batch => batch.set(docRef(bm.id), toDoc(bm, order));
+      });
+    }
+
+    // 이웃 간격이 너무 좁아지면 전체를 다시 매긴다 (드묾, 항목 수만큼 쓰기).
+    function renumberAll() {
+      orders.clear();
+      commitInBatches(bookmarks.map((bm, i) => {
+        orders.set(bm.id, i * ORDER_GAP);
+        return batch => batch.update(docRef(bm.id), { order: i * ORDER_GAP, updatedAt: fs.serverTimestamp() });
+      }));
+    }
+
+    return {
+      query: fs.query(collectionRef, fs.orderBy('order')),
+
+      // Firestore 문서도 외부 입력이다. 문서 ID와 맞지 않는 항목은 새 ID를 주면 문서와 어긋나므로 건너뛴다.
+      fromSnapshot(snapshot) {
+        orders.clear();
+        const list = [];
+        snapshot.forEach(docSnap => {
+          const data = docSnap.data();
+          const bm = normalizeBookmark({ ...data, id: docSnap.id });
+          if (!bm || String(bm.id) !== docSnap.id || typeof data.order !== 'number') return;
+          orders.set(bm.id, data.order);
+          list.push(bm);
+        });
+        return list;
+      },
+
+      add(item) {
+        const order = minOrder() - ORDER_GAP;
+        orders.set(item.id, order);
+        track(fs.setDoc(docRef(item.id), toDoc(item, order)));
+      },
+
+      update(id, fields) {
+        const ref = docRef(id);
+        trackUpdate(ref, fs.updateDoc(ref, { ...fields, updatedAt: fs.serverTimestamp() }));
+      },
+
+      remove(id) {
+        orders.delete(id);
+        track(fs.deleteDoc(docRef(id)));
+      },
+
+      // 옮긴 자리의 앞뒤 이웃 order 사이 값을 준다.
+      move(id, toIndex) {
+        const before = toIndex > 0 ? orders.get(bookmarks[toIndex - 1].id) : undefined;
+        const after = toIndex < bookmarks.length - 1 ? orders.get(bookmarks[toIndex + 1].id) : undefined;
+        let order = 0;
+        if (before !== undefined && after !== undefined) {
+          if (!(after - before > MIN_ORDER_GAP)) {
+            renumberAll();
+            return;
+          }
+          order = (before + after) / 2;
+        } else if (after !== undefined) {
+          order = after - ORDER_GAP;
+        } else if (before !== undefined) {
+          order = before + ORDER_GAP;
+        }
+        orders.set(id, order);
+        const ref = docRef(id);
+        trackUpdate(ref, fs.updateDoc(ref, { order, updatedAt: fs.serverTimestamp() }));
+      },
+
+      // 덮어쓰기: 새 목록에 없는 문서는 지우고 나머지는 새로 쓴다.
+      replaceAll(list) {
+        const keep = new Set(list.map(bm => bm.id));
+        const deletes = [...orders.keys()].filter(id => !keep.has(id)).map(id => batch => batch.delete(docRef(id)));
+        orders.clear();
+        commitInBatches([...deletes, ...setAll(list, 0)]);
+      },
+
+      mergeAll(list) {
+        commitInBatches(setAll(list, minOrder() - ORDER_GAP * list.length));
+      }
+    };
   }
 
   /* ------------------- 다크 모드 ------------------- */
@@ -528,9 +846,9 @@
   // Enter 저장은 <form>의 submit으로 처리된다.
   function saveBookmark() {
     const id = Number(document.getElementById('editId').value);
-    const title = truncateTitle(document.getElementById('bmTitle').value.trim());
+    const title = truncateText(document.getElementById('bmTitle').value.trim(), MAX_TITLE_LENGTH);
     let url = document.getElementById('bmUrl').value.trim();
-    const category = document.getElementById('bmCategory').value.trim();
+    const category = truncateText(document.getElementById('bmCategory').value.trim(), MAX_CATEGORY_LENGTH);
 
     if (!title || !url) {
       alert('제목과 주소(URL)를 입력해주세요.');
@@ -543,6 +861,11 @@
 
     if (!isSafeUrl(url)) {
       alert('올바른 웹 주소(URL)가 아닙니다.');
+      return;
+    }
+
+    if (url.length > MAX_URL_LENGTH) {
+      alert(`웹 주소가 너무 깁니다. (${MAX_URL_LENGTH}자 이하)`);
       return;
     }
 
@@ -673,6 +996,7 @@
   // 초기화 실행
   initTheme();
   renderBookmarks();
+  initCloud();
 </script>
 </body>
 </html>

@@ -1,9 +1,9 @@
 # CLAUDE.md
 
-단일 HTML 파일 북마크 관리자. 빌드·패키지·자동 테스트가 없고, `index.html`을 브라우저로 열면 실행된다.
+HTML 파일 하나로 된 북마크 관리자. 빌드·패키지·자동 테스트가 없고, `index.html`을 브라우저로 열면 로컬 모드로 실행된다. `http(s)`로 열면 Google 로그인과 Firestore 동기화(클라우드 모드)를 쓸 수 있다. Firestore 보안 규칙은 `firestore.rules`에 두고 사용자가 Firebase 콘솔에 게시한다.
 
 - 기능 목록, 데이터 모델, 설계 결정(D-NNN), 알려진 문제(K-NN): [docs/DECISIONS.md](docs/DECISIONS.md) — **작업 전에 읽는다.**
-- 확정된 설계: 여러 기기 동기화(Firebase) [docs/SYNC-DESIGN.md](docs/SYNC-DESIGN.md) — 6장의 단계 순서대로 구현한다. 아래 규약 중 설계와 충돌하는 부분(단일 파일, 외부 요청)은 **해당 단계를 구현할 때** 설계도 6.1에 따라 바꾸고, 그 전에는 아래 규약을 따른다.
+- 확정된 설계: 여러 기기 동기화(Firebase) [docs/SYNC-DESIGN.md](docs/SYNC-DESIGN.md) — 6장의 단계 순서대로 구현한다. 1·2단계는 구현됐다 (`feat/multi-device-sync`). 3단계에서 파일이 늘면 아래 구조·원칙을 함께 고친다.
 
 ## 구조
 
@@ -11,9 +11,10 @@
 
 | 구역 주석 | 내용 |
 |---|---|
-| (상단 상수) | `STORAGE_KEY`(v3), `LEGACY_STORAGE_KEY`(v2), `THEME_KEY`, `MAX_TITLE_LENGTH`, 시드 데이터로 `bookmarks` 초기화, `store` 생성 |
-| `데이터 검증 및 불러오기` | `isSafeUrl`, `truncateTitle`, `normalizeBookmark`, `generateId`, `sanitizeBookmarks`, `loadBookmarks` (v2 → v3 마이그레이션) |
+| (상단 상수) | `STORAGE_KEY`(v3), `LEGACY_STORAGE_KEY`(v2), `THEME_KEY`, `MAX_*_LENGTH`(규칙과 같은 길이 제한), `FIREBASE_CONFIG`, `FIREBASE_SDK_URL`(버전 고정), 시드 데이터로 `bookmarks` 초기화, `store` 생성 |
+| `데이터 검증 및 불러오기` | `isSafeUrl`, `truncateText`, `normalizeBookmark`, `generateId`, `sanitizeBookmarks`, `loadBookmarks` (v2 → v3 마이그레이션, 시드는 복사본) |
 | `저장소 및 상태 작업` | `createLocalStore`(`store`), 작업 함수 `addBookmark` / `updateBookmark` / `removeBookmark` / `moveBookmark` / `replaceAll` / `mergeAll` |
+| `로그인 및 클라우드 동기화` | `initCloud`(SDK 동적 import), `login`/`logout`/`toggleAuth`, `enterCloudMode`/`leaveCloudMode`(스냅샷 리스너), `offerLocalMigration`, `createCloudStore`(`order`로 순서 저장) |
 | `다크 모드` | `initTheme` / `applyTheme` / `toggleTheme` (저장은 `toggleTheme`에서만) |
 | `파비콘 및 렌더링` | `getFaviconUrl`, `getVisibleBookmarks`(검색·필터), `renderBookmarks` (그리드 전체 재생성) |
 | `드래그 앤 드롭` | `setupDragEvents`, `moveBookmarkBy` (이동 버튼) |
@@ -25,8 +26,10 @@
 ## 작성 규약
 
 ### 원칙
-- **단일 파일, 외부 의존성 없음(D-001)을 지킨다.** 라이브러리·CDN·빌드 도구·파일 분리가 필요하면 먼저 사용자와 상의하고 DECISIONS.md에 결정을 추가한다.
-- 새 외부 네트워크 요청을 추가하지 않는다 (현재 예외는 파비콘 하나, D-008).
+- **빌드 없음. 정적 파일 몇 개. 외부 코드는 버전 고정한 Firebase SDK만 (D-017).** 다른 라이브러리·CDN·빌드 도구가 필요하면 먼저 사용자와 상의하고 DECISIONS.md에 결정을 추가한다.
+- 새 외부 네트워크 요청을 추가하지 않는다. 허용: 파비콘(D-008), `www.gstatic.com/firebasejs/`, Firebase SDK가 스스로 하는 Auth·Firestore 통신.
+- Firebase SDK는 **동적 `import()`**로 불러온다. 불러오지 못하거나 `file://`로 열어도 로컬 모드로 동작해야 한다. SDK 버전을 올리면 세 파일(`firebase-app/auth/firestore.js`)을 같은 버전으로 맞춘다.
+- 앱 안의 경로는 상대 경로로 쓰고, 호스팅 전용 기능(주소 다시 쓰기·응답 헤더·리디렉트 설정)에 의존하지 않는다.
 - 요청받은 범위만 고친다. 김에 리팩터링하지 않는다.
 
 ### JavaScript
@@ -36,7 +39,9 @@
 - **사용자·외부 데이터를 HTML 문자열에 넣을 때는 항상 `escapeHtml()`을 거친다.** 텍스트 노드뿐 아니라 `href`, `title`, `src` 등 **속성값도 포함**한다. 가능하면 `textContent`/`setAttribute`를 쓴다.
 - `href`에 들어갈 URL은 `http:`/`https:` 스킴만 허용한다.
 - 인라인 `onclick="…"` 안에 데이터 값을 끼워 넣지 않는다. 새 코드는 `addEventListener` 또는 `data-*` 속성 + 위임으로 연결한다.
-- `localStorage`와 가져온 JSON은 신뢰하지 않는다: 파싱을 `try`로 감싸고, 항목마다 `title`/`url` 타입을 검사한다.
+- `localStorage`, 가져온 JSON, **Firestore 스냅샷**은 신뢰하지 않는다: 파싱을 `try`로 감싸고, 항목마다 `normalizeBookmark`로 검사한다.
+- 길이 제한 등 검증 조건을 바꾸면 `firestore.rules`도 같이 고친다 (다르면 앱에서는 저장됐는데 서버가 거부한다). 규칙을 바꾸면 사용자에게 콘솔 게시를 요청한다.
+- Firestore 쓰기의 Promise는 `await`하지 않는다 (오프라인에서는 끝나지 않음). 오류는 `.catch`로 받아 알린다.
 - 저장 형식(항목 필드, 키)을 바꾸면 `STORAGE_KEY`의 버전을 올리고 이전 키에서 옮기는 마이그레이션을 넣는다. **이전 JSON 백업 파일도 계속 복구할 수 있어야 한다.**
 - 주석과 구역 구분(`/* ---------- 제목 ---------- */`)은 한국어로 쓰고, 기존 밀도에 맞춘다(무엇이 아니라 왜를 설명할 때만).
 
@@ -58,7 +63,7 @@
 
 ## 코드 점검 규약
 
-변경을 마쳤거나 점검을 요청받으면 아래 순서로 확인한다. 자동 테스트가 없으므로 **브라우저에서 직접 실행해 확인한 것만 "확인됨"이라고 보고**한다.
+변경을 마쳤거나 점검을 요청받으면 아래 순서로 확인한다. 자동 테스트가 없으므로 **브라우저에서 직접 실행해 확인한 것만 "확인됨"이라고 보고**한다. 테스트는 로컬 서버(`http://localhost:포트`)에서 한다 — `file://`로는 로그인·동기화를 확인할 수 없다. 로그인은 사용자가 직접 한다.
 
 ### 1. 체크리스트
 - [ ] **XSS:** 사용자·외부 데이터가 `innerHTML`·템플릿 문자열·속성·인라인 핸들러에 들어가는 모든 지점이 이스케이프되거나 `textContent`를 쓰는가
@@ -68,7 +73,8 @@
 - [ ] **호환성:** 기존 `localStorage` 데이터와 기존 JSON 백업을 그대로 읽는가
 - [ ] **테마:** 새 색이 두 테마 모두 정의됐고, 다크 모드에서 글자가 읽히는가
 - [ ] **반응형:** 360px 폭에서 가로 스크롤이 없는가
-- [ ] **의존성:** 새 외부 요청·라이브러리가 없는가
+- [ ] **의존성:** 허용 목록 밖의 외부 요청·라이브러리가 없는가
+- [ ] **두 모드:** 로컬 모드와 클라우드 모드에서 모두 동작하고, Firebase를 불러오지 못해도 로컬 모드로 동작하는가
 - [ ] **콘솔:** 브라우저 콘솔에 오류가 없는가
 - [ ] **문서:** DECISIONS.md(결정·기능·알려진 문제)가 변경과 일치하는가
 

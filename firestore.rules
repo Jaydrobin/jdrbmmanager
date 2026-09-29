@@ -1,0 +1,32 @@
+rules_version = '2';
+
+// jdrbmmanager Firestore 보안 규칙.
+// 바꾸면 Firebase 콘솔 → Firestore Database → 규칙에 붙여넣고 게시한다 (호스팅과 따로 적용됨).
+// 검증 조건은 index.html의 normalizeBookmark·MAX_*_LENGTH와 맞춘다. 다르면 앱에서는 저장됐는데 서버가 거부한다.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 누구나 Google 로그인 자체는 할 수 있으므로, 허용한 UID만 자기 데이터에 접근하게 한다.
+    // UID는 공개돼도 된다 (UID만으로는 로그인할 수 없음).
+    function isAllowedOwner(uid) {
+      return request.auth != null
+        && request.auth.uid == uid
+        && uid in ['ynSYnR8s1oTErwuCvPRPs0PGLyE3'];
+    }
+
+    function isValidBookmark(d) {
+      return d.keys().hasOnly(['title', 'url', 'category', 'addedAt', 'order', 'updatedAt'])
+        && d.keys().hasAll(['title', 'url', 'category', 'addedAt', 'order', 'updatedAt'])
+        && d.title is string && d.title.size() > 0 && d.title.size() <= 500
+        && d.url is string && d.url.size() <= 2048 && d.url.matches('https?://.+')
+        && d.category is string && d.category.size() <= 100
+        && (d.addedAt == null || d.addedAt is int)
+        && d.order is number
+        && d.updatedAt == request.time;
+    }
+
+    match /users/{uid}/bookmarks/{bookmarkId} {
+      allow read, delete: if isAllowedOwner(uid);
+      allow create, update: if isAllowedOwner(uid) && isValidBookmark(request.resource.data);
+    }
+  }
+}

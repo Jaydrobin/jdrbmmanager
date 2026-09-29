@@ -14,8 +14,8 @@
 |---|---|
 | 구성 | `index.html` 한 파일 (CSS → HTML → JS 순서, 약 630줄) |
 | 실행 | 브라우저로 `index.html` 열기 |
-| 저장소 | `localStorage` (브라우저·출처별로 분리됨) |
-| 외부 요청 | 파비콘 이미지(Google S2) 한 가지 |
+| 저장소 | `localStorage` (브라우저·출처별로 분리됨). 로그인하면 Firestore (D-017, 구현 중) |
+| 외부 요청 | 파비콘 이미지(Google S2). `http(s)`로 열었을 때 버전 고정한 Firebase SDK(`www.gstatic.com/firebasejs/`)와 그 SDK의 Auth·Firestore 통신 (D-017) |
 | UI 언어 | 한국어 |
 
 ## 2. 기능 목록
@@ -23,7 +23,7 @@
 | 기능 | 동작 | 관련 함수 |
 |---|---|---|
 | 북마크 목록 | 카드 그리드로 표시. 파비콘·제목(새 탭 링크)·URL·카테고리 배지 | `renderBookmarks` |
-| 추가 | 모달에서 이름(500자 이하)·URL·카테고리 입력. 새 항목은 **맨 앞**에 추가하고 추가 시각(`addedAt`)을 기록 | `openModal`, `saveBookmark` → `addBookmark` |
+| 추가 | 모달에서 이름(500자 이하)·URL(2048자 이하)·카테고리(100자 이하) 입력. 새 항목은 **맨 앞**에 추가하고 추가 시각(`addedAt`)을 기록 | `openModal`, `saveBookmark` → `addBookmark` |
 | 수정 | 카드의 [수정] → 같은 모달에 값 채움. 숨은 `editId`로 추가/수정 구분. 추가 시각은 유지 | `editBookmark`, `saveBookmark` → `updateBookmark` |
 | 삭제 | `confirm` 확인 후 삭제 | `deleteBookmark` → `removeBookmark` |
 | URL 보정 | `http://`·`https://`로 시작하지 않으면 `https://`를 붙임 | `saveBookmark` |
@@ -35,6 +35,8 @@
 | JSON 백업 | 배열 전체를 `bookmarks_backup_YYYY-MM-DD.json`으로 다운로드 | `exportJSON` |
 | JSON 복구 | 파일 선택 → [확인] 전체 덮어쓰기 / [취소] 기존 목록 앞에 병합 (겹치는 ID는 새로 발급) | `importJSON` → `replaceAll` / `mergeAll` |
 | 모달 | Enter로 저장, Esc·[취소]·바깥 영역 클릭으로 닫기. 이름·URL이 비면 브라우저가 저장을 막음 | `saveBookmark`, `closeModal`, `handleOverlayClick` |
+| 로그인·동기화 (구현 중, D-017) | `http(s)`로 열면 [🔑 로그인] 버튼. Google 팝업 로그인 → 클라우드 모드(Firestore, 다른 기기의 변경이 자동 반영, 오프라인 쓰기는 연결되면 올라감). 로그아웃 → 로컬 목록으로 돌아가고 클라우드 캐시를 지움. 올라가지 않은 변경이 있으면 먼저 물음 | `initCloud`, `login`, `logout`, `enterCloudMode`, `leaveCloudMode`, `createCloudStore` |
+| 첫 로그인 이전 | 기기마다 한 번, 로컬 목록에 사용자 데이터가 있으면 계정에 올릴지(합칠지) 물음. 시드 데이터만 있으면 묻지 않음 | `offerLocalMigration` |
 
 ## 3. 데이터 모델과 저장소
 
@@ -44,13 +46,14 @@
 {
   id: 1790662241437017,     // number. 새 항목은 Date.now() * 1000 + 난수 세 자리 (D-003)
   title: 'GitHub',          // string, 필수. 500자 이하 (넘으면 잘라냄)
-  url: 'https://github.com',// string, 필수. http(s) 스킴으로 보정됨
-  category: '개발',         // string, 빈 문자열 가능
+  url: 'https://github.com',// string, 필수. http(s) 스킴으로 보정됨. 2048자 이하 (넘으면 항목을 버림)
+  category: '개발',         // string, 빈 문자열 가능. 100자 이하 (넘으면 잘라냄)
   addedAt: 1727600000000    // number(ms) 또는 null(모름). v0.4에서 추가 (D-015)
 }
 ```
 
-- 전역 배열 `bookmarks`가 유일한 상태이며, **배열 순서 = 화면 순서**입니다. 상태는 작업 함수(`addBookmark`·`updateBookmark`·`removeBookmark`·`moveBookmark`·`replaceAll`·`mergeAll`)로만 바꾸고, 저장은 저장소 계층 `store`가 맡습니다. 지금은 `localStorage`에 배열 전체를 쓰는 LocalStore 하나입니다.
+- 전역 배열 `bookmarks`가 유일한 상태이며, **배열 순서 = 화면 순서**입니다. 상태는 작업 함수(`addBookmark`·`updateBookmark`·`removeBookmark`·`moveBookmark`·`replaceAll`·`mergeAll`)로만 바꾸고, 저장은 저장소 계층 `store`가 맡습니다. 로컬 모드는 `localStorage`에 배열 전체를 쓰는 LocalStore, 클라우드 모드는 바뀐 문서만 쓰는 CloudStore입니다.
+- 클라우드 모드의 Firestore 경로와 필드(`order`, `updatedAt` 추가)는 SYNC-DESIGN.md 3.4. 메모리 항목 형태는 위와 같습니다.
 - 추가 시각만 저장하고 수정 시각은 저장하지 않습니다.
 
 ### localStorage 키
@@ -60,6 +63,8 @@
 | `single_file_bookmarks_v3` | `bookmarks` 배열 JSON (v0.4~) |
 | `single_file_bookmarks_v2` | v0.3 이하 형식. v3 키가 없을 때 한 번 읽어 v3로 옮기고, 지우지 않고 남겨 둠 |
 | `single_file_bookmarks_theme` | `'light'` 또는 `'dark'`. 사용자가 직접 전환했을 때만 저장됨 |
+| `single_file_bookmarks_migrated_<uid>` | 첫 로그인 이전을 물은 시각(ms). 기기·계정마다 한 번만 묻기 위함 |
+| `firestore_*` | Firestore SDK가 여러 탭 조율에 쓰는 키 (앱이 직접 쓰지 않음) |
 
 - 키가 없으면 시드 데이터 3개(Google, GitHub, YouTube)로 시작합니다. 모두 삭제하면 `[]`가 저장되므로 시드가 다시 나타나지 않습니다.
 - 값이 손상돼 있으면 원래 문자열을 `<키>_broken`에 보관합니다 (D-014).
@@ -69,7 +74,7 @@
 각 항목 형식: **상태** · 맥락 · 결정 · 결과(장점 / 대가).
 
 ### D-001. 단일 HTML 파일, 외부 의존성 없음
-- **상태:** 대체됨 → D-017 (2026-09-29). 동기화 구현 단계가 진행되기 전까지 코드는 이 원칙대로 남아 있음.
+- **상태:** 대체됨 → D-017 (2026-09-29). 2단계부터 Firebase SDK(외부 코드)와 `firestore.rules`가 들어옴. 로컬 모드는 여전히 `index.html` 하나로 동작.
 - **맥락:** 설치·빌드 없이 어디서나 열 수 있는 개인용 도구.
 - **결정:** CSS·JS를 모두 `index.html`에 인라인. 라이브러리·번들러·패키지 매니저를 쓰지 않음.
 - **결과:** 파일 하나만 복사하면 배포 끝. 대신 모듈 분리·자동 테스트·린트가 없고, 파일이 커질수록 탐색이 어려워짐.
@@ -140,7 +145,8 @@
   - `localStorage` 불러오기, JSON 복구, 모달 저장 세 경로 모두 `sanitizeBookmarks`/`isSafeUrl`로 검증한다.
   - 유효한 항목 = 제목이 비어 있지 않은 문자열이고 URL이 `http:`/`https:`. 아닌 항목은 **버린다**(복구 시 건너뛴 개수를 알림).
   - ID는 양의 정수로 정규화하고(`"7"` → `7`), 잘못되거나 없거나 **이미 쓰인** ID(병합 시 기존 목록, 또는 같은 목록의 앞선 항목)는 기존 최대값 이후로 새로 발급한다 (K-05). 새 ID는 `generateId`로 만든다 (D-003).
-  - 제목은 500자까지만 둔다 (Firestore 규칙과 맞춤, D-017). 넘는 제목은 항목을 버리지 않고 잘라낸다.
+  - 제목 500자, 카테고리 100자, URL 2048자까지만 둔다 (Firestore 규칙과 맞춤, D-017). 넘는 제목·카테고리는 항목을 버리지 않고 잘라내고, URL은 자르면 다른 주소가 되므로 항목을 버린다.
+  - Firestore 스냅샷의 문서도 같은 `normalizeBookmark`로 검증한다. 문서 ID와 맞지 않는 항목은 새 ID를 주지 않고 건너뛴다.
   - `localStorage` 값이 JSON이 아니거나 배열이 아니면 시드 데이터로 시작하되, 원래 문자열을 `single_file_bookmarks_v2_broken` 키에 보관한다.
   - 렌더링 시 `href`·`src` 속성값도 `escapeHtml`로 처리하고, 카드 버튼은 인라인 `onclick` 대신 클로저로 연결한다.
 - **결과:** 외부 데이터로 스크립트를 실행하거나 앱을 멈출 수 없음. 대신 형식이 틀린 항목은 조용히 사라지고(불러오기 시), 스킴이 `http(s)`가 아닌 북마크(예: `ftp:`, `file:`)는 더 이상 저장할 수 없음.
@@ -189,6 +195,8 @@
 | K-12 | 낮음 | 파비콘 요청으로 모든 도메인이 Google에 전송됨 | D-008 | 수용 (설계상) |
 | K-13 | 낮음 | 모달 제목 초기값(`북마크 추가`)과 코드 값(`새 북마크 추가`)이 다름 | `index.html:142`, `openModal` | 해결 (267d928) |
 | K-14 | 낮음 | `exportHTML`과 `exportJSON`의 다운로드 코드가 중복 | `index.html:415-423`, `428-436` | 해결 (267d928) |
+| K-15 | 중간 | 저장된 목록이 없을 때 `loadBookmarks`가 시드 상수 `DEFAULT_BOOKMARKS`를 복사하지 않고 그대로 돌려줌. 시드 상태에서 추가·수정하면 상수가 바뀌어, 첫 로그인 이전이 로컬 목록을 "시드만 있음"으로 잘못 보고 묻지 않음 | `loadBookmarks`, `readStoredBookmarks` | 해결 (D-017 2단계 커밋) |
+| K-16 | 낮음 | 로그인한 채로 앱을 열면 Firebase SDK를 불러오는 동안(수백 ms~수 초) 로컬 목록이 잠깐 보이고, 그 사이의 변경은 로컬 목록에 저장됨 | `initCloud` | 미해결 (3단계의 동기화 상태 표시·SDK 캐시와 함께 검토) |
 
 ## 6. 새 결정 추가 방법
 
