@@ -117,6 +117,8 @@ Firestore 경로: `users/{uid}/bookmarks/{문서 ID}`
   - 이웃 간격이 `1e-6`보다 작아지면 전체를 1024 간격으로 다시 매긴다 (드묾, 항목 수만큼 쓰기)
 - **새 ID 생성 규칙 변경:** 두 기기가 오프라인에서 같은 ID를 만들지 않도록 `max(Date.now() * 1000 + 0~999 난수, 최대 ID + 1)`로 바꾼다 (2255년까지 안전한 정수 범위). 기존 ID와 JSON 백업은 그대로 쓸 수 있다.
 - 제목 길이 제한(500자)을 앱의 `normalizeBookmark`에도 넣는다. 규칙과 앱의 검증이 다르면 앱에서는 저장됐는데 서버가 거부하는 일이 생긴다.
+  - (1단계 구현) 넘는 제목은 항목을 버리지 않고 500자로 **잘라낸다**(`truncateTitle`, 기존 데이터를 잃지 않도록). 모달 입력란은 `maxlength="500"`. 길이는 JS `length`(UTF-16 단위) 기준이라 규칙의 `size()`가 세는 방식과 같은지 2단계에서 확인한다.
+  - URL(2048자)·카테고리(100자) 제한은 1단계에서 앱에 넣지 않았다. 2단계에서 규칙과 함께 정한다 (긴 URL은 잘라낼 수 없으므로 거부할지 규칙을 늘릴지).
 
 ### 3.5 저장소 계층과 상태 변경 규칙
 
@@ -132,6 +134,8 @@ Firestore 경로: `users/{uid}/bookmarks/{문서 ID}`
 | `mergeAll(list)` | JSON 복구 병합, 첫 로그인 이전 | `writeBatch`로 쓰기 |
 
 - 각 함수는 ① 메모리 배열을 바꾸고 ② 바로 다시 그린 뒤 ③ `store`에 저장을 맡긴다.
+- (1단계 구현) `store` 메서드: `add(item)`, `update(id, fields)`, `remove(id)`, `move(id, toIndex)`, `replaceAll(list)`, `mergeAll(list)`. 배열을 바꾼 **뒤에** 호출되므로 CloudStore는 `bookmarks`에서 옮긴 항목의 새 이웃을 찾아 `order`를 계산할 수 있다. `moveBookmark`의 `toIndex`는 옮긴 뒤 전체 배열에서의 위치다.
+- (1단계 구현) 이동 버튼 처리 함수는 이름이 겹쳐 `moveBookmarkBy(id, direction)`로 바꿨다. `mergeAll`은 ID 충돌 처리가 끝난 목록(`sanitizeBookmarks(list, bookmarks)`)을 받는다.
 - **Firestore 쓰기의 Promise는 `await`하지 않는다.** 오프라인에서는 서버가 받을 때까지 끝나지 않기 때문이다. 오류는 `.catch`로 받아 알림만 띄운다.
 - **원격 변경:** `onSnapshot(orderBy('order'))`로 받은 결과로 `bookmarks`를 교체하고 다시 그린다. 내 기기의 쓰기도 SDK가 먼저 반영해 주므로 화면과 캐시가 어긋나지 않는다.
 - **Firestore에서 온 문서도 외부 입력이다.** 스냅샷의 모든 문서를 `normalizeBookmark`로 검증한다 (D-014와 같은 규칙).

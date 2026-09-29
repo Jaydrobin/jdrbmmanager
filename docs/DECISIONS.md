@@ -23,17 +23,17 @@
 | 기능 | 동작 | 관련 함수 |
 |---|---|---|
 | 북마크 목록 | 카드 그리드로 표시. 파비콘·제목(새 탭 링크)·URL·카테고리 배지 | `renderBookmarks` |
-| 추가 | 모달에서 이름·URL·카테고리 입력. 새 항목은 **맨 앞**에 추가하고 추가 시각(`addedAt`)을 기록 | `openModal`, `saveBookmark` |
-| 수정 | 카드의 [수정] → 같은 모달에 값 채움. 숨은 `editId`로 추가/수정 구분. 추가 시각은 유지 | `editBookmark`, `saveBookmark` |
-| 삭제 | `confirm` 확인 후 삭제 | `deleteBookmark` |
+| 추가 | 모달에서 이름(500자 이하)·URL·카테고리 입력. 새 항목은 **맨 앞**에 추가하고 추가 시각(`addedAt`)을 기록 | `openModal`, `saveBookmark` → `addBookmark` |
+| 수정 | 카드의 [수정] → 같은 모달에 값 채움. 숨은 `editId`로 추가/수정 구분. 추가 시각은 유지 | `editBookmark`, `saveBookmark` → `updateBookmark` |
+| 삭제 | `confirm` 확인 후 삭제 | `deleteBookmark` → `removeBookmark` |
 | URL 보정 | `http://`·`https://`로 시작하지 않으면 `https://`를 붙임 | `saveBookmark` |
 | 검색 | 제목·URL 부분 일치, 대소문자 무시, 입력 즉시 반영 | `renderBookmarks` |
 | 카테고리 필터 | 현재 북마크의 카테고리로 선택 목록을 자동 생성. 선택한 카테고리가 없어지면 '전체'로 돌아감 | `updateCategoryOptions` |
-| 순서 변경 | 카드를 드래그 앤 드롭하거나 카드의 [←]/[→] 버튼(터치·키보드용). 순서는 저장됨 | `setupDragEvents`, `moveBookmark` |
+| 순서 변경 | 카드를 드래그 앤 드롭하거나 카드의 [←]/[→] 버튼(터치·키보드용). 순서는 저장됨 | `setupDragEvents`, `moveBookmarkBy` → `moveBookmark` |
 | 다크 모드 | 토글 버튼. 직접 전환하기 전에는 OS 설정을 따르고, 전환하면 선택값을 저장 | `initTheme`, `applyTheme`, `toggleTheme` |
 | HTML 내보내기 | Netscape 북마크 형식. 카테고리가 폴더가 됨 (브라우저에서 가져오기 가능). 북마크의 `ADD_DATE`는 추가 시각 | `exportHTML` |
 | JSON 백업 | 배열 전체를 `bookmarks_backup_YYYY-MM-DD.json`으로 다운로드 | `exportJSON` |
-| JSON 복구 | 파일 선택 → [확인] 전체 덮어쓰기 / [취소] 기존 목록 앞에 병합 (겹치는 ID는 새로 발급) | `importJSON` |
+| JSON 복구 | 파일 선택 → [확인] 전체 덮어쓰기 / [취소] 기존 목록 앞에 병합 (겹치는 ID는 새로 발급) | `importJSON` → `replaceAll` / `mergeAll` |
 | 모달 | Enter로 저장, Esc·[취소]·바깥 영역 클릭으로 닫기. 이름·URL이 비면 브라우저가 저장을 막음 | `saveBookmark`, `closeModal`, `handleOverlayClick` |
 
 ## 3. 데이터 모델과 저장소
@@ -42,15 +42,15 @@
 
 ```js
 {
-  id: 1727600000000,        // number. 새 항목은 Date.now()
-  title: 'GitHub',          // string, 필수
+  id: 1790662241437017,     // number. 새 항목은 Date.now() * 1000 + 난수 세 자리 (D-003)
+  title: 'GitHub',          // string, 필수. 500자 이하 (넘으면 잘라냄)
   url: 'https://github.com',// string, 필수. http(s) 스킴으로 보정됨
   category: '개발',         // string, 빈 문자열 가능
   addedAt: 1727600000000    // number(ms) 또는 null(모름). v0.4에서 추가 (D-015)
 }
 ```
 
-- 전역 배열 `bookmarks`가 유일한 상태이며, **배열 순서 = 화면 순서**입니다.
+- 전역 배열 `bookmarks`가 유일한 상태이며, **배열 순서 = 화면 순서**입니다. 상태는 작업 함수(`addBookmark`·`updateBookmark`·`removeBookmark`·`moveBookmark`·`replaceAll`·`mergeAll`)로만 바꾸고, 저장은 저장소 계층 `store`가 맡습니다. 지금은 `localStorage`에 배열 전체를 쓰는 LocalStore 하나입니다.
 - 추가 시각만 저장하고 수정 시각은 저장하지 않습니다.
 
 ### localStorage 키
@@ -77,13 +77,13 @@
 ### D-002. localStorage에 저장
 - **상태:** 추정
 - **맥락:** 서버가 없으므로 브라우저 내장 저장소가 유일한 선택지.
-- **결정:** 변경 시마다 배열 전체를 `localStorage`에 JSON으로 저장 (`syncAndRender`).
+- **결정:** 변경 시마다 배열 전체를 `localStorage`에 JSON으로 저장 (LocalStore, D-017 1단계 이전에는 `syncAndRender`).
 - **결과:** 단순하고 즉시 저장됨. 대신 기기·브라우저 간 동기화가 없고, 사이트 데이터 삭제 시 함께 사라짐 → JSON 백업 기능(D-010)으로 보완.
 
 ### D-003. ID는 `Date.now()` 숫자
 - **상태:** 추정
-- **결정:** 새 북마크 ID를 생성 시각(ms)으로 사용.
-- **결과:** 별도 카운터 없이 사실상 고유. 대신 가져온 데이터의 ID는 검증하지 않아 중복·문자열 ID가 섞일 수 있음 (5장 참조).
+- **결정:** 새 북마크 ID를 생성 시각(ms)으로 사용. 2026-09-29(D-017 1단계)부터는 두 기기가 오프라인에서 같은 ID를 만들지 않도록 `max(Date.now() * 1000 + 0~999 난수, 최대 ID + 1)` (`generateId`).
+- **결과:** 별도 카운터 없이 사실상 고유. 2255년까지 안전한 정수 범위. 이전 ID(ms)와 섞여 있어도 되며 형식이 같아 저장 키를 올리지 않음. 가져온 데이터의 ID 검증은 D-014.
 
 ### D-004. 새 북마크는 목록 맨 앞에 추가
 - **상태:** 추정 (코드 주석 "신규 북마크는 최상단에 추가")
@@ -139,7 +139,8 @@
 - **결정:**
   - `localStorage` 불러오기, JSON 복구, 모달 저장 세 경로 모두 `sanitizeBookmarks`/`isSafeUrl`로 검증한다.
   - 유효한 항목 = 제목이 비어 있지 않은 문자열이고 URL이 `http:`/`https:`. 아닌 항목은 **버린다**(복구 시 건너뛴 개수를 알림).
-  - ID는 양의 정수로 정규화하고(`"7"` → `7`), 잘못되거나 없거나 **이미 쓰인** ID(병합 시 기존 목록, 또는 같은 목록의 앞선 항목)는 기존 최대값 이후로 새로 발급한다 (K-05). 새 북마크 ID도 `max(Date.now(), 최대 ID + 1)`.
+  - ID는 양의 정수로 정규화하고(`"7"` → `7`), 잘못되거나 없거나 **이미 쓰인** ID(병합 시 기존 목록, 또는 같은 목록의 앞선 항목)는 기존 최대값 이후로 새로 발급한다 (K-05). 새 ID는 `generateId`로 만든다 (D-003).
+  - 제목은 500자까지만 둔다 (Firestore 규칙과 맞춤, D-017). 넘는 제목은 항목을 버리지 않고 잘라낸다.
   - `localStorage` 값이 JSON이 아니거나 배열이 아니면 시드 데이터로 시작하되, 원래 문자열을 `single_file_bookmarks_v2_broken` 키에 보관한다.
   - 렌더링 시 `href`·`src` 속성값도 `escapeHtml`로 처리하고, 카드 버튼은 인라인 `onclick` 대신 클로저로 연결한다.
 - **결과:** 외부 데이터로 스크립트를 실행하거나 앱을 멈출 수 없음. 대신 형식이 틀린 항목은 조용히 사라지고(불러오기 시), 스킴이 `http(s)`가 아닌 북마크(예: `ftp:`, `file:`)는 더 이상 저장할 수 없음.

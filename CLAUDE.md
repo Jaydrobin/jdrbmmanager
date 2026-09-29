@@ -3,7 +3,7 @@
 단일 HTML 파일 북마크 관리자. 빌드·패키지·자동 테스트가 없고, `index.html`을 브라우저로 열면 실행된다.
 
 - 기능 목록, 데이터 모델, 설계 결정(D-NNN), 알려진 문제(K-NN): [docs/DECISIONS.md](docs/DECISIONS.md) — **작업 전에 읽는다.**
-- 확정된 설계: 여러 기기 동기화(Firebase) [docs/SYNC-DESIGN.md](docs/SYNC-DESIGN.md) — 6장의 단계 순서대로 구현한다. 아래 규약 중 설계와 충돌하는 부분(단일 파일, 외부 요청, `syncAndRender`)은 **해당 단계를 구현할 때** 설계도 6.1에 따라 바꾸고, 그 전에는 아래 규약을 따른다.
+- 확정된 설계: 여러 기기 동기화(Firebase) [docs/SYNC-DESIGN.md](docs/SYNC-DESIGN.md) — 6장의 단계 순서대로 구현한다. 아래 규약 중 설계와 충돌하는 부분(단일 파일, 외부 요청)은 **해당 단계를 구현할 때** 설계도 6.1에 따라 바꾸고, 그 전에는 아래 규약을 따른다.
 
 ## 구조
 
@@ -11,13 +11,14 @@
 
 | 구역 주석 | 내용 |
 |---|---|
-| (상단 상수) | `STORAGE_KEY`(v3), `LEGACY_STORAGE_KEY`(v2), `THEME_KEY`, 시드 데이터로 `bookmarks` 초기화 |
-| `데이터 검증 및 불러오기` | `isSafeUrl`, `normalizeBookmark`, `sanitizeBookmarks`, `loadBookmarks` (v2 → v3 마이그레이션) |
+| (상단 상수) | `STORAGE_KEY`(v3), `LEGACY_STORAGE_KEY`(v2), `THEME_KEY`, `MAX_TITLE_LENGTH`, 시드 데이터로 `bookmarks` 초기화, `store` 생성 |
+| `데이터 검증 및 불러오기` | `isSafeUrl`, `truncateTitle`, `normalizeBookmark`, `generateId`, `sanitizeBookmarks`, `loadBookmarks` (v2 → v3 마이그레이션) |
+| `저장소 및 상태 작업` | `createLocalStore`(`store`), 작업 함수 `addBookmark` / `updateBookmark` / `removeBookmark` / `moveBookmark` / `replaceAll` / `mergeAll` |
 | `다크 모드` | `initTheme` / `applyTheme` / `toggleTheme` (저장은 `toggleTheme`에서만) |
 | `파비콘 및 렌더링` | `getFaviconUrl`, `getVisibleBookmarks`(검색·필터), `renderBookmarks` (그리드 전체 재생성) |
-| `드래그 앤 드롭` | `setupDragEvents`, `moveBookmark` (이동 버튼) |
+| `드래그 앤 드롭` | `setupDragEvents`, `moveBookmarkBy` (이동 버튼) |
 | `카테고리 필터 관리` | `updateCategoryOptions` |
-| `모달 및 CRUD` | 모달 열기/닫기, Esc 처리, `saveBookmark`(`<form>` submit), `editBookmark`, `deleteBookmark`, `syncAndRender` |
+| `모달 및 CRUD` | 모달 열기/닫기, Esc 처리, `saveBookmark`(`<form>` submit), `editBookmark`, `deleteBookmark` |
 | `HTML 북마크 내보내기` | `exportHTML` (Netscape 형식), `downloadFile` |
 | `JSON 백업 / 복구` | `exportJSON`, `importJSON`, `escapeHtml` |
 
@@ -30,8 +31,8 @@
 
 ### JavaScript
 - `const`/`let`만 쓴다. 함수는 `function` 선언, 이름은 camelCase, 상수는 `UPPER_SNAKE_CASE`.
-- 상태는 전역 배열 `bookmarks` 하나다. **상태를 바꾼 뒤에는 반드시 `syncAndRender()`를 호출**한다 — 저장과 렌더링의 유일한 경로다.
-- ID는 `number`로 유지하고 `===`로 비교한다. 외부에서 들어온 ID는 숫자로 정규화한다.
+- 상태는 전역 배열 `bookmarks` 하나다. **상태 변경은 작업 함수(`addBookmark` 등)로만 한다** — 작업 함수가 배열을 바꾸고, 다시 그린 뒤, 저장을 `store`에 맡기는 유일한 경로다. 작업 함수 밖에서 `bookmarks`를 바꾸거나 `localStorage`에 목록을 직접 쓰지 않는다.
+- ID는 `number`로 유지하고 `===`로 비교한다. 외부에서 들어온 ID는 숫자로 정규화한다. 새 ID는 `generateId`로만 만든다.
 - **사용자·외부 데이터를 HTML 문자열에 넣을 때는 항상 `escapeHtml()`을 거친다.** 텍스트 노드뿐 아니라 `href`, `title`, `src` 등 **속성값도 포함**한다. 가능하면 `textContent`/`setAttribute`를 쓴다.
 - `href`에 들어갈 URL은 `http:`/`https:` 스킴만 허용한다.
 - 인라인 `onclick="…"` 안에 데이터 값을 끼워 넣지 않는다. 새 코드는 `addEventListener` 또는 `data-*` 속성 + 위임으로 연결한다.
@@ -62,7 +63,7 @@
 ### 1. 체크리스트
 - [ ] **XSS:** 사용자·외부 데이터가 `innerHTML`·템플릿 문자열·속성·인라인 핸들러에 들어가는 모든 지점이 이스케이프되거나 `textContent`를 쓰는가
 - [ ] **URL:** 링크로 쓰이는 URL이 모달 입력과 JSON 복구 양쪽에서 `http(s)`만 허용되는가
-- [ ] **상태 경로:** `bookmarks`를 바꾸는 모든 코드가 `syncAndRender()`로 끝나는가
+- [ ] **상태 경로:** `bookmarks`를 바꾸는 코드가 작업 함수 안에만 있고, 작업 함수마다 다시 그리기와 `store` 호출이 있는가
 - [ ] **외부 입력:** 깨진 JSON, 배열 아님, 필드 누락, 문자열 ID, 중복 ID를 넣어도 앱이 멈추지 않는가
 - [ ] **호환성:** 기존 `localStorage` 데이터와 기존 JSON 백업을 그대로 읽는가
 - [ ] **테마:** 새 색이 두 테마 모두 정의됐고, 다크 모드에서 글자가 읽히는가
