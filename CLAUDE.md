@@ -1,26 +1,26 @@
 # CLAUDE.md
 
-정적 파일 몇 개로 된 북마크 관리자. 빌드·패키지·자동 테스트가 없고, `index.html`을 브라우저로 열면 로컬 모드로 실행된다. `http(s)`로 열면 Google 로그인과 Firestore 동기화(클라우드 모드)를 쓸 수 있다. Firestore 보안 규칙은 `firestore.rules`에 두고 사용자가 Firebase 콘솔에 게시한다. `https`·`localhost`에서는 서비스 워커(`sw.js`)가 앱 파일과 SDK를 캐시해 오프라인에서도 열리고, `manifest.webmanifest`·`icons/`로 홈 화면에 설치할 수 있다.
+정적 파일 몇 개로 된 북마크 관리자. 빌드·패키지·자동 테스트가 없고, `index.html`을 브라우저로 열면 로컬 모드로 실행된다. `http(s)`로 열면 Google 로그인과 Firestore 동기화(클라우드 모드)를 쓸 수 있다. 쓸 Firebase 프로젝트는 배포별 설정 파일 `config.js`(없으면 `index.html`의 기본 설정, `null`이면 클라우드 끔)로 정한다. Firestore 보안 규칙은 `firestore.rules`에 두고 사용자가 Firebase 콘솔에 게시한다. `https`·`localhost`에서는 서비스 워커(`sw.js`)가 앱 파일과 SDK를 캐시해 오프라인에서도 열리고, `manifest.webmanifest`·`icons/`로 홈 화면에 설치할 수 있다.
 
-- 기능 목록, 데이터 모델(localStorage·Firestore), 설계 결정(D-NNN), 알려진 문제(K-NN): [docs/DECISIONS.md](docs/DECISIONS.md) — **작업 전에 읽는다.** 동기화 설계는 D-017~D-023, 바뀐 것만 받기(계정 목록 사본·묘비)는 D-025.
-- 사용법, Firebase·GitHub Pages 설정, 배포·폰 테스트·호스팅 이전 절차: [README.md](README.md).
-- 진행 중인 설계: 배포별 설정 파일 `config.js`(D-026) [docs/CONFIG-FILE-DESIGN.md](docs/CONFIG-FILE-DESIGN.md) — 7장의 1단계부터 구현한다. 설계와 충돌하는 규약은 해당 단계에서 바꾼다.
+- 기능 목록, 데이터 모델(localStorage·Firestore), 설계 결정(D-NNN), 알려진 문제(K-NN): [docs/DECISIONS.md](docs/DECISIONS.md) — **작업 전에 읽는다.** 동기화 설계는 D-017~D-023, 바뀐 것만 받기(계정 목록 사본·묘비)는 D-025, 배포별 설정 파일은 D-026.
+- 사용법, Firebase·GitHub Pages 설정, 포크해서 자기 Firebase 프로젝트로 쓰기, 배포·폰 테스트·호스팅 이전 절차: [README.md](README.md).
 
 ## 구조
 
 | 파일 | 내용 |
 |---|---|
 | `index.html` | 앱 본체. `<style>` → 마크업 → `<script>` 순서. 스크립트는 아래 표처럼 주석으로 구역을 나눈다 |
-| `sw.js` | 서비스 워커. `CACHE_NAME`(릴리스마다 올림), `SDK_BASE`(`index.html`의 SDK 버전과 같게), 앱 셸은 네트워크 우선(4초 넘으면 캐시), SDK·아이콘은 캐시 우선, 다른 출처는 가로채지 않음 |
+| `config.js` | 배포별 설정(D-026). 저장소에는 주석뿐인 템플릿. 앱 스크립트 바로 앞에서 일반 스크립트로 불러오며, `window.APP_CONFIG = { firebase: {…} \| null }` 대입만 둔다 |
+| `sw.js` | 서비스 워커. `CACHE_NAME`(릴리스마다 올림), `SDK_BASE`(`index.html`의 SDK 버전과 같게), `OPTIONAL_FILES`(없어도 되는 파일, 따로 캐시해 없어도 설치 성공), 앱 셸·`config.js`는 네트워크 우선(4초 넘으면 캐시), SDK·아이콘은 캐시 우선, 다른 출처는 가로채지 않음 |
 | `manifest.webmanifest`, `icons/icon-192.png`, `icons/icon-512.png` | 홈 화면 설치용. 아이콘은 `any`·`maskable` 겸용(가운데 안전 영역 안에 그림) |
 | `firestore.rules` | Firestore 보안 규칙 (허용 UID, 항목 검증). 저장소에 두고 콘솔에 붙여넣어 게시 |
 
 | 구역 주석 | 내용 |
 |---|---|
-| (상단 상수) | `STORAGE_KEY`(v3), `LEGACY_STORAGE_KEY`(v2), `THEME_KEY`, `MAX_*_LENGTH`(규칙과 같은 길이 제한), `CLOUD_COPY_KEY_PREFIX`·`CLOUD_COPY_VERSION`(계정 목록 사본), `FIREBASE_CONFIG`, `FIREBASE_SDK_URL`(버전 고정), `bookmarks` 초기화(로컬 목록, 로그인한 채로 닫았으면 사본 `bootCopy`), `store` 생성 |
+| (상단 상수) | `STORAGE_KEY`(v3), `LEGACY_STORAGE_KEY`(v2), `THEME_KEY`, `MAX_*_LENGTH`(규칙과 같은 길이 제한), `CLOUD_COPY_KEY_PREFIX`·`CLOUD_COPY_VERSION`(계정 목록 사본), `DEFAULT_FIREBASE_CONFIG`(기본 설정)·`FIREBASE_REQUIRED_KEYS`, `FIREBASE_CONFIG`(= `resolveFirebaseConfig()`, `null`이면 클라우드 끔), `FIREBASE_SDK_URL`(버전 고정), 클라우드를 껐으면 남은 사본 지우기, `bookmarks` 초기화(로컬 목록, 로그인한 채로 닫았으면 사본 `bootCopy`), `store` 생성 |
 | `데이터 검증 및 불러오기` | `isSafeUrl`, `truncateText`, `normalizeBookmark`, `generateId`, `sanitizeBookmarks`, `loadBookmarks` (v2 → v3 마이그레이션, 시드는 복사본), `loadCloudCopy`(사본 검증, 하나라도 잘못되면 버림) |
 | `저장소 및 상태 작업` | `createLocalStore`(`store`), 작업 함수 `addBookmark` / `updateBookmark` / `removeBookmark` / `moveBookmark` / `replaceAll` / `mergeAll` |
-| `로그인 및 클라우드 동기화` | 주기 상수(`FULL_SYNC_INTERVAL_DAYS`, `TOMBSTONE_KEEP_DAYS`), `initCloud`(SDK 동적 import, 10초 제한), `setCloudLoading`(계정 준비 전 잠금, K-16), `waitForSync`, `login`/`logout`/`toggleAuth`, `updateSyncStatus`/`watchPendingWrites`(동기화 상태), `enterCloudMode` → `startCloudSync`(필요하면 전체 받기 → 바뀐 것 구독, D-025) / `leaveCloudMode`, `showCloudList`(원격 변경을 화면에), `offerLocalMigration`, `cleanTombstones`(묘비 비우기), `createCloudStore`(`order`로 순서 저장, 묘비 삭제, 사본 저장, `fetchAll`·`applyChanges`) |
+| `로그인 및 클라우드 동기화` | 주기 상수(`FULL_SYNC_INTERVAL_DAYS`, `TOMBSTONE_KEEP_DAYS`), `resolveFirebaseConfig`·`isAppConfigDeclared`(쓸 설정, D-026), `isServedOverHttp`/`canUseCloud`(서비스 워커는 앞의 것만), `initCloud`(SDK 동적 import, 10초 제한), `setCloudLoading`(계정 준비 전 잠금, K-16), `waitForSync`, `login`/`logout`/`toggleAuth`, `updateSyncStatus`/`watchPendingWrites`(동기화 상태), `enterCloudMode` → `startCloudSync`(필요하면 전체 받기 → 바뀐 것 구독, D-025) / `leaveCloudMode`, `showCloudList`(원격 변경을 화면에), `forgetCloudCopy`(표시 키와 사본 지우기), `offerLocalMigration`, `cleanTombstones`(묘비 비우기), `createCloudStore`(`order`로 순서 저장, 묘비 삭제, 사본 저장, `fetchAll`·`applyChanges`) |
 | `다크 모드` | `initTheme` / `applyTheme` / `toggleTheme` (저장은 `toggleTheme`에서만) |
 | `파비콘 및 렌더링` | `getFaviconUrl`, `getVisibleBookmarks`(검색·필터), `renderBookmarks` (그리드 전체 재생성, 계정 준비 전에는 카드 버튼·드래그 잠금) |
 | `드래그 앤 드롭` | `setupDragEvents`, `moveBookmarkBy` (이동 버튼) |
@@ -36,8 +36,9 @@
 ### 원칙
 - **빌드 없음. 정적 파일 몇 개. 외부 코드는 버전 고정한 Firebase SDK만 (D-017).** 다른 라이브러리·CDN·빌드 도구가 필요하면 먼저 사용자와 상의하고 DECISIONS.md에 결정을 추가한다.
 - 새 외부 네트워크 요청을 추가하지 않는다. 허용: 파비콘(D-008), `www.gstatic.com/firebasejs/`, Firebase SDK가 스스로 하는 Auth·Firestore 통신.
-- Firebase SDK는 **동적 `import()`**로 불러온다. 불러오지 못하거나 `file://`로 열어도 로컬 모드로 동작해야 한다. SDK 버전을 올리면 세 파일(`firebase-app/auth/firestore.js`)을 같은 버전으로 맞추고, `index.html`의 `FIREBASE_SDK_URL`과 `sw.js`의 `SDK_BASE`를 함께 고친다.
-- 앱 파일(`index.html`, `sw.js`, 매니페스트, 아이콘)을 바꿔 릴리스할 때는 `sw.js`의 `CACHE_NAME`을 올린다. 캐시할 파일을 추가하면 `sw.js`의 `APP_SHELL`에도 넣는다.
+- Firebase SDK는 **동적 `import()`**로 불러온다. 불러오지 못하거나 `file://`로 열거나 설정(`config.js`)으로 클라우드를 꺼도 로컬 모드로 동작해야 한다. SDK 버전을 올리면 세 파일(`firebase-app/auth/firestore.js`)을 같은 버전으로 맞추고, `index.html`의 `FIREBASE_SDK_URL`과 `sw.js`의 `SDK_BASE`를 함께 고친다.
+- 앱 파일(`index.html`, `config.js`, `sw.js`, 매니페스트, 아이콘)을 바꿔 릴리스할 때는 `sw.js`의 `CACHE_NAME`을 올린다. 캐시할 파일을 추가하면 `sw.js`의 `APP_SHELL`에도 넣는다. 없는 배포도 있는 파일(`config.js`처럼)은 `APP_SHELL`이 아니라 `OPTIONAL_FILES`에 넣는다(`addAll`은 하나만 없어도 설치 전체가 실패).
+- `config.js`에는 `window.APP_CONFIG = …` 대입만 둔다. 다른 최상위 선언이 `index.html`의 이름과 겹치면 앱 스크립트 전체가 멈춘다. 반대로 `index.html`은 `APP_CONFIG`라는 최상위 이름을 선언하지 않는다. 설정값을 쓰는 코드는 `resolveFirebaseConfig`가 정한 `FIREBASE_CONFIG`만 읽는다 (D-026).
 - 앱 안의 경로는 상대 경로로 쓰고, 호스팅 전용 기능(주소 다시 쓰기·응답 헤더·리디렉트 설정)에 의존하지 않는다.
 - 요청받은 범위만 고친다. 김에 리팩터링하지 않는다.
 
@@ -86,13 +87,13 @@
 - [ ] **테마:** 새 색이 두 테마 모두 정의됐고, 다크 모드에서 글자가 읽히는가
 - [ ] **반응형:** 360px 폭에서 가로 스크롤이 없는가
 - [ ] **의존성:** 허용 목록 밖의 외부 요청·라이브러리가 없는가
-- [ ] **두 모드:** 로컬 모드와 클라우드 모드에서 모두 동작하고, Firebase를 불러오지 못해도 로컬 모드로 동작하는가
+- [ ] **두 모드:** 로컬 모드와 클라우드 모드에서 모두 동작하고, Firebase를 불러오지 못하거나 `config.js`로 클라우드를 끄거나 설정 형식이 틀려도 로컬 모드로 동작하는가
 - [ ] **사본·묘비:** 클라우드 모드의 모든 변경(내 쓰기, 받은 변경, 거부된 쓰기의 복구)이 사본에도 반영되고, 삭제가 묘비로 쓰이는가 (D-025)
 - [ ] **콘솔:** 브라우저 콘솔에 오류가 없는가
 - [ ] **문서:** DECISIONS.md(결정·기능·알려진 문제)가 변경과 일치하는가
 
 ### 2. 수동 회귀 테스트
-`http://localhost:포트`에서, 로그아웃 상태로 개발자 도구에서 `localStorage.clear()` 후 새로고침해 깨끗한 상태로 시작한다. 1~11은 로컬 모드, 12~21은 클라우드 모드다. 클라우드 테스트는 사용자 계정의 실제 데이터에 쓰므로 **이름으로 구별되는 테스트 항목만** 만들고 지우며, 덮어쓰기 복구는 하지 않는다(사용자가 허락한 경우 제외).
+`http://localhost:포트`에서, 로그아웃 상태로 개발자 도구에서 `localStorage.clear()` 후 새로고침해 깨끗한 상태로 시작한다. 1~11은 로컬 모드, 12~21은 클라우드 모드, 22~24는 배포별 설정 파일이다. Claude 앱의 브라우저 창은 `confirm`·`alert`를 화면에 띄우지 않고 곧바로 취소로 처리하므로, 대화상자를 사람이 봐야 하는 확인은 사용자의 크롬에서 한다. 클라우드 테스트는 사용자 계정의 실제 데이터에 쓰므로 **이름으로 구별되는 테스트 항목만** 만들고 지우며, 덮어쓰기 복구는 하지 않는다(사용자가 허락한 경우 제외).
 
 1. 시드 북마크 3개가 보인다.
 2. 추가: `example.com` 입력 후 Enter → `https://example.com`으로 저장, 목록 맨 앞에 나타남. 빈 칸으로 Enter → 저장되지 않음. Esc → 모달이 닫힘.
@@ -114,7 +115,12 @@
 18. 전체 동기화: REST로 테스트 문서를 만들고 반영된 뒤 REST로 문서를 직접 지우면(묘비 없이) 목록에 남는다. 사본의 `lastFullSync`를 8일 전으로 바꾸고(열린 탭이 사본을 다시 쓰기 전에 곧바로) 새로고침 → 그 항목이 빠지고 `lastFullSync`가 지금으로 바뀐다.
 19. 깨진 사본: 사본에 `javascript:` 주소 항목을 넣거나 JSON을 깨뜨리고 새로고침 → "계정 목록을 불러오는 중…" 뒤 전체를 다시 받는다.
 20. 묘비 비우기: 상태 표시를 누르면 삭제 기록 수·용량을 묻고, 방금 만든 묘비는 남는다("8일이 지난 삭제 기록이 없습니다"). 테스트 묘비만 있을 때 `store.purgeTombstones(Date.now())`로 기준 0일을 확인한다(다른 묘비가 있으면 하지 않음). 오프라인(`navigator.onLine` false)이면 "연결된 뒤에 다시 시도해 주세요."
-21. 테스트가 끝나면 테스트 항목을 지우고, 그 묘비도 20의 방법으로 비워 서버에 흔적을 남기지 않는다.
+21. 테스트가 끝나면 테스트 항목을 지우고, 그 묘비도 20의 방법으로 비워 서버에 흔적을 남기지 않는다. 다른 묘비가 있어 기준 0일로 비울 수 없으면, 다른 기기(폰)가 삭제를 받은 뒤 테스트 묘비 문서만(`deleted`·`updatedAt`만 있는지 확인하고) `deleteDoc`으로 지운다.
+22. `config.js`를 치운 사본(다른 포트): 기본 설정으로 로그인 버튼이 보이고, 콘솔 오류는 `config.js` 404 한 줄뿐이다. 서비스 워커가 설치되고 서버를 멈춰도 열린다.
+23. `config.js`를 `window.APP_CONFIG = { firebase: null };`로 바꾼 사본: 로그인 버튼 없이 로컬 모드. 로그인한 채로 닫은 상태(`single_file_bookmarks_cloud_uid`와 사본을 직접 넣음)에서 열어도 잠기지 않고 로컬 목록이 보이며 두 키가 지워진다. 서비스 워커는 등록된다.
+24. 형식이 틀린 `config.js`(`apiKey` 누락, `firebase: 'x'`, `const APP_CONFIG = {…}`): 로그인 버튼 없이 로컬 모드, 콘솔에 경고 한 줄. 형식이 맞는 다른 프로젝트 값이면 `firebase.app.options.projectId`가 그 값이다.
+
+22~24는 `config.js`를 고친 사본 폴더에서 하고 저장소의 `config.js`는 커밋하지 않는다.
 
 ### 3. 보고 형식
 문제마다 다음을 적는다. 이번에 고치지 않는 문제는 DECISIONS.md 5장에 추가한다.
