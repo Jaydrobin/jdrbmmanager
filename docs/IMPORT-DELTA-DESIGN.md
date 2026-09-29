@@ -74,7 +74,8 @@ function folderPath(a) {
 | 추가 시각 | `ADD_DATE`(초) × 1000. 값이 이미 ms(10¹²대)나 µs(10¹⁵대)로 보이면 자릿수로 맞춤. `isPlausibleTime`이 아니거나 없으면 `null` |
 | 아이콘·`LAST_MODIFIED`·태그 | 버림 (앱에 없는 정보) |
 
-- 브라우저 최상위 폴더 판별: `PERSONAL_TOOLBAR_FOLDER`·`UNFILED_BOOKMARKS_FOLDER` 속성이 있거나, 경로의 **첫 폴더**가 이름 목록(`북마크바`, `북마크 바`, `기타 북마크`, `모바일 북마크`, `북마크 도구 모음`, `북마크 메뉴`, `Bookmarks bar`, `Bookmarks Bar`, `Other bookmarks`, `Other Bookmarks`, `Mobile bookmarks`, `Bookmarks Toolbar`, `Bookmarks Menu`)에 있을 때. "기본 북마크"는 이 앱이 내보낸 파일에서만 나오므로 어느 위치든 `''`로 바꾼다 → **이 앱의 HTML 내보내기를 다시 가져오면 카테고리가 그대로 돌아온다.**
+- 브라우저 최상위 폴더 판별: `PERSONAL_TOOLBAR_FOLDER`·`UNFILED_BOOKMARKS_FOLDER` 속성이 있거나, 경로의 **첫 폴더**가 이름 목록(`북마크바`, `북마크 바`, `기타 북마크`, `모바일 북마크`, `북마크 도구 모음`, `북마크 메뉴`, `Bookmarks bar`, `Bookmarks Bar`, `Other bookmarks`, `Other Bookmarks`, `Mobile bookmarks`, `Bookmarks Toolbar`, `Bookmarks Menu`)에 있을 때. "기본 북마크"는 이 앱이 내보낸 파일에서만 나오므로 어느 위치든 `''`로 바꾼다.
+- 이 앱의 `exportHTML`은 `<META NAME="generator" CONTENT="jdrbmmanager">`를 넣고, 이 표시가 있는 파일은 최상위 폴더 판별을 하지 않는다(폴더가 모두 카테고리). 이름만으로는 사용자의 카테고리 `기타 북마크`와 브라우저의 `기타 북마크`를 가릴 수 없기 때문 → **이 앱의 HTML 내보내기를 다시 가져오면 카테고리가 그대로 돌아온다**(이름이 `기본 북마크`인 카테고리만 예외).
 
 ### 2.4 중복 건너뛰기와 추가 순서
 

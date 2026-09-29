@@ -26,7 +26,7 @@
 | `드래그 앤 드롭` | `setupDragEvents`, `moveBookmarkBy` (이동 버튼) |
 | `카테고리 필터 관리` | `updateCategoryOptions` |
 | `모달 및 CRUD` | 모달 열기/닫기, Esc 처리, `saveBookmark`(`<form>` submit), `editBookmark`, `deleteBookmark` |
-| `HTML 북마크 내보내기` | `EXPORT_DEFAULT_FOLDER`(카테고리 없는 항목의 폴더), `exportHTML` (Netscape 형식), `downloadFile` |
+| `HTML 북마크 내보내기` | `EXPORT_DEFAULT_FOLDER`(카테고리 없는 항목의 폴더), `EXPORT_GENERATOR`(이 앱이 내보낸 파일 표시), `exportHTML` (Netscape 형식), `downloadFile` |
 | `JSON 백업 / 복구` | `exportJSON`, `importJSON`([📂 가져오기]. 파일을 JSON 백업과 북마크 HTML로 가려 분기), `escapeHtml` |
 | `브라우저 북마크 가져오기` | `isBookmarkHtml`, `parseBrowserBookmarks`(`DOMParser`, `folderCategory`로 폴더 → 카테고리), `urlKey`(같은 주소 판별), `importBrowserBookmarks`(중복 건너뛰고 `mergeAll`) (D-024) |
 | (끝) | 초기화, `online`/`offline` 이벤트, 서비스 워커 등록 |
@@ -100,7 +100,7 @@
 7. HTML 내보내기 → 크롬 등에서 가져오면 카테고리가 폴더로 보이고, 새로 추가한 북마크의 추가 시각이 맞다.
 8. JSON 백업 → [📂 가져오기]로 복구: [확인]은 덮어쓰기, [취소]는 병합. 같은 파일을 두 번 병합한 뒤 하나를 지워도 하나만 사라진다.
 9. 잘못된 파일(배열 아닌 JSON, 텍스트 파일, 빈 HTML 파일, 북마크 없는 HTML) 가져오기 → 알림 후 앱이 정상 동작.
-10. 브라우저 북마크 가져오기: 크롬 등에서 내보낸 북마크 HTML을 [📂 가져오기] → 가져올 개수 확인 후 목록 맨 앞에 추가. 폴더가 카테고리가 되고(가장 안쪽 폴더, `북마크바`·`기타 북마크` 등 최상위 폴더는 제외), 추가 시각이 브라우저와 같다. `javascript:` 주소는 건너뛴다. 같은 파일을 다시 가져오면 "새로 가져올 북마크가 없습니다". 7에서 내보낸 파일을 빈 목록에 가져오면 카테고리가 그대로 돌아온다.
+10. 브라우저 북마크 가져오기: 크롬 등에서 내보낸 북마크 HTML을 [📂 가져오기] → 가져올 개수 확인 후 목록 맨 앞에 추가. 폴더가 카테고리가 되고(가장 안쪽 폴더, `북마크바`·`기타 북마크` 등 최상위 폴더는 제외), 추가 시각이 브라우저와 같다. `javascript:` 주소는 건너뛴다. 같은 파일을 다시 가져오면 "새로 가져올 북마크가 없습니다". 7에서 내보낸 파일을 빈 목록에 가져오면 카테고리가 그대로 돌아온다(`기타 북마크`처럼 브라우저 최상위 폴더와 이름이 같은 카테고리 포함).
 11. 마이그레이션: `single_file_bookmarks_v2`에만 데이터를 넣고 새로고침 → 같은 목록이 보이고 v3 키가 생긴다.
 12. 로그인(사용자가 직접): 헤더에 계정과 `✓ 동기화됨`. 로컬에 사용자 데이터가 있고 처음 로그인하는 기기면 올릴지 묻는다.
 13. 클라우드에서 추가·수정·삭제·이동·북마크 HTML 가져오기 → 서버 순서까지 반영(`getDocsFromServer`로 확인). 이동 버튼 포커스 유지.

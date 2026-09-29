@@ -992,6 +992,8 @@
   /* ------------ HTML 북마크 내보내기 (표준 규격) ------------ */
   // 카테고리 없는 북마크를 넣는 폴더. 가져올 때는 카테고리 없음으로 되돌린다 (D-024).
   const EXPORT_DEFAULT_FOLDER = '기본 북마크';
+  // 이 앱이 내보낸 파일 표시. 브라우저는 무시하고, 가져올 때 폴더를 모두 카테고리로 읽게 한다 (D-024).
+  const EXPORT_GENERATOR = 'jdrbmmanager';
 
   function exportHTML() {
     const now = Math.floor(Date.now() / 1000);
@@ -1002,6 +1004,7 @@
      It will be read and overwritten.
      DO NOT EDIT! -->
 <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=UTF-8">
+<META NAME="generator" CONTENT="${EXPORT_GENERATOR}">
 <TITLE>Bookmarks</TITLE>
 <H1>Bookmarks</H1>
 <DL><p>\n`;
@@ -1129,10 +1132,11 @@
   }
 
   // 중첩 폴더는 가장 안쪽 폴더 이름만 쓴다 (앱에는 폴더가 없음).
-  function folderCategory(a) {
+  // 이 앱이 내보낸 파일의 폴더는 모두 카테고리이므로, 브라우저 최상위 폴더와 이름이 같아도 빼지 않는다.
+  function folderCategory(a, fromThisApp) {
     const names = folderPath(a)
-      .filter((h3, i) => !h3.hasAttribute('personal_toolbar_folder') && !h3.hasAttribute('unfiled_bookmarks_folder')
-        && !(i === 0 && BROWSER_ROOT_FOLDERS.has(h3.textContent.trim())))
+      .filter((h3, i) => fromThisApp || (!h3.hasAttribute('personal_toolbar_folder') && !h3.hasAttribute('unfiled_bookmarks_folder')
+        && !(i === 0 && BROWSER_ROOT_FOLDERS.has(h3.textContent.trim()))))
       .map(h3 => h3.textContent.trim())
       .filter(name => name && name !== EXPORT_DEFAULT_FOLDER);
     return names.length ? names[names.length - 1] : '';
@@ -1167,6 +1171,7 @@
   // 값은 textContent·getAttribute로만 꺼내고 normalizeBookmark로 검증한다 (D-014).
   function parseBrowserBookmarks(text) {
     const doc = new DOMParser().parseFromString(text, 'text/html');
+    const fromThisApp = [...doc.querySelectorAll('meta[name="generator"]')].some(meta => meta.getAttribute('content') === EXPORT_GENERATOR);
     const items = [];
     let invalid = 0;
     doc.querySelectorAll('a[href]').forEach(a => {
@@ -1174,7 +1179,7 @@
       const item = normalizeBookmark({
         title: a.textContent.trim() || hostnameOf(url),
         url,
-        category: folderCategory(a),
+        category: folderCategory(a, fromThisApp),
         addedAt: parseAddDate(a.getAttribute('add_date'))
       });
       if (item) items.push(item);
