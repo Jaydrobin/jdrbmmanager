@@ -1,9 +1,9 @@
 # 여러 기기 동기화 설계 (Firebase)
 
-- **상태:** 제안 — 7장 "열린 질문"이 정해지면 `확정`으로 바꾸고 구현을 시작한다.
+- **상태:** 확정 (2026-09-29) — 6장의 단계 순서대로 구현한다. 7장에 확정된 답을 적었다.
 - **작성일:** 2026-09-29
 - **기준 코드:** v0.4 (커밋 `709799d`). 함수 이름은 그 시점 `index.html` 기준.
-- **관련 결정:** DECISIONS.md D-017 (이 문서를 가리킴), D-001 (대체 예정)
+- **관련 결정:** DECISIONS.md D-017 (이 문서를 가리킴), D-001 (D-017로 대체됨)
 
 ---
 
@@ -15,6 +15,7 @@
 | 로그인 | Google 계정 로그인 |
 | 오프라인 | 네트워크 없이도 **앱 열기·조회·추가·수정·삭제·순서 변경**이 되고, 연결되면 자동으로 동기화된다 |
 | 비용 | Firebase **Spark(무료) 요금제** 안에서만 쓴다. 결제 수단을 등록하지 않는다 |
+| 호스팅 | 처음에는 **GitHub Pages**(공개 저장소). 나중에 Firebase Hosting·Cloudflare Pages·Netlify·Vercel로 **코드 수정 없이** 옮길 수 있어야 한다 (3.12) |
 
 **하지 않는 것**
 - 여러 사람이 목록을 공유하는 기능 (사용자 = 나 한 명, 계정 여러 개는 가능)
@@ -35,18 +36,20 @@
 │  Firebase Auth (Google 로그인, 로그인 상태는 IndexedDB에 유지)   │
 │  sw.js (서비스 워커): 앱 파일·SDK를 캐시해 오프라인에서도 열림   │
 └──────────────────────────────┬─────────────────────────────────┘
-                               │ 연결되면 자동 동기화
-          ┌────────────────────┴─────────────────────┐
-          │ Firebase 프로젝트 (Spark)                 │
-          │  Hosting : <프로젝트>.firebaseapp.com     │
-          │  Auth    : Google 제공업체                │
-          │  Firestore: users/{uid}/bookmarks/{id}    │
-          └──────────────────────────────────────────┘
+        앱 파일 받기 ▲         │ 연결되면 자동 동기화
+┌───────────────────┴──────┐  ┌──────────┴───────────────────────────┐
+│ 정적 호스팅               │  │ Firebase 프로젝트 (Spark)             │
+│ GitHub Pages (처음)       │  │  Auth     : Google 제공업체            │
+│ jaydrobin.github.io/      │  │  Firestore: users/{uid}/bookmarks/{id} │
+│   jdrbmmanager/           │  │  (Hosting은 쓰지 않음, 3.12)           │
+└──────────────────────────┘  └──────────────────────────────────────┘
 ```
 
-## 3. 설계 결정 (제안)
+- 호스팅은 파일만 내려 준다. 로그인과 데이터는 호스팅과 상관없이 Firebase가 맡는다.
 
-### 3.1 Firebase(Auth + Firestore + Hosting)를 쓴다
+## 3. 설계 결정
+
+### 3.1 Firebase(Auth + Firestore)를 쓴다
 
 요구사항 네 가지를 모두 만족하면서 **서버 코드를 직접 쓰지 않아도 되는** 선택지가 Firebase뿐이다.
 
@@ -70,8 +73,9 @@
 | `sw.js` | 서비스 워커 (3.8) |
 | `manifest.webmanifest` | "홈 화면에 추가"용 앱 정보 |
 | `icons/icon-192.png`, `icons/icon-512.png` | 앱 아이콘 (안드로이드 설치 조건) |
-| `firebase.json`, `.firebaserc` | Hosting 배포 설정 |
-| `firestore.rules` | Firestore 보안 규칙 (3.9) |
+| `firestore.rules` | Firestore 보안 규칙 (3.9). 호스팅과 따로, Firebase 콘솔에 붙여넣어 적용 |
+
+- 호스팅 전용 설정 파일(`firebase.json`, `netlify.toml`, `vercel.json` 등)은 **두지 않는다.** 없어도 동작해야 한다 (3.12). 나중에 그 호스팅으로 옮길 때만 추가한다.
 
 - **빌드 도구·패키지 매니저는 여전히 쓰지 않는다.** Firebase SDK는 공식 CDN에서 **버전을 고정해** 불러온다.
   `https://www.gstatic.com/firebasejs/<버전>/firebase-app.js`, `firebase-auth.js`, `firebase-firestore.js`
@@ -87,7 +91,7 @@
 | 동기화 | 없음 | 자동 |
 
 - 로그인하지 않아도 지금과 똑같이 쓸 수 있어야 한다. Firebase를 불러오지 못해도 앱이 멈추면 안 된다.
-- 로그아웃하면 로컬 모드로 돌아가 **로그인 전 로컬 목록**이 보인다. 클라우드 캐시(IndexedDB)는 로그아웃할 때 지운다 (`terminate` → `clearIndexedDbPersistence`). (열린 질문 Q1)
+- 로그아웃하면 로컬 모드로 돌아가 **로그인 전 로컬 목록**이 보인다. 클라우드 캐시(IndexedDB)는 로그아웃할 때 지운다 (`terminate` → `clearIndexedDbPersistence`). (7장 Q1)
 
 ### 3.4 데이터 모델
 
@@ -146,8 +150,10 @@ Firestore 경로: `users/{uid}/bookmarks/{문서 ID}`
 
 ### 3.7 로그인
 
-- Google 제공업체, `signInWithPopup`을 기본으로 쓰고, 팝업이 막히면 `signInWithRedirect`로 다시 시도한다.
-- 앱은 **`<프로젝트>.firebaseapp.com`** 에서 서비스하고 `authDomain`도 같은 도메인으로 둔다. 요즘 브라우저는 다른 사이트의 저장소 접근을 막는데, Firebase 문서에 따르면 이 조합에서는 리디렉트 로그인도 영향을 받지 않는다. (`web.app`이나 다른 호스팅이면 팝업만 쓰거나 추가 설정이 필요하다.)
+- Google 제공업체. **어느 호스팅에서든 `signInWithPopup`이 기본**이다. `authDomain`은 `<프로젝트>.firebaseapp.com` 그대로 둔다.
+- 요즘 브라우저는 다른 사이트의 저장소 접근을 막기 때문에, 앱 주소와 `authDomain`이 다르면 리디렉트 로그인(`signInWithRedirect`)이 실패할 수 있다(Firebase 문서). 그래서 **리디렉트는 앱 주소가 `authDomain`과 같을 때만**(= 나중에 Firebase Hosting의 `firebaseapp.com` 주소로 옮겼을 때) 팝업이 막혔을 때의 대체 수단으로 쓴다. 판단은 `location.hostname === FIREBASE_CONFIG.authDomain` 한 줄.
+- 팝업이 막혔는데 리디렉트를 쓸 수 없으면 "팝업을 허용해 주세요" 알림을 띄운다.
+- 앱을 올린 주소는 Firebase 콘솔의 **승인된 도메인**에 있어야 로그인이 된다 (5장).
 - 로그인 상태는 Auth SDK가 IndexedDB에 보관하므로 오프라인에서 앱을 열어도 로그인된 상태로 캐시 데이터를 쓸 수 있다.
 - **허용 사용자 제한:** 누구나 Google 로그인 자체는 할 수 있으므로, 보안 규칙에서 **허용한 UID만** 데이터에 접근하게 해 무료 한도를 남이 쓰지 못하게 막는다 (3.9).
 - Firebase 설정값(`apiKey` 등)은 공개돼도 되는 값이다(비밀 키가 아님). 보호는 보안 규칙과 승인된 도메인으로 한다. `index.html` 상단 상수 `FIREBASE_CONFIG`에 둔다.
@@ -162,7 +168,8 @@ Firestore 경로: `users/{uid}/bookmarks/{문서 ID}`
 
 - 캐시 이름에 버전을 넣고(`jdrbm-v5` 등), 릴리스할 때마다 올린다. 이전 캐시는 `activate`에서 지운다.
 - 서비스 워커는 `https://`와 `localhost`에서만 동작한다. `file://`로 열면 오프라인 셸이 없다(로컬 모드는 여전히 동작).
-- `manifest.webmanifest`: `name`, `short_name`, `start_url: "./"`, `display: "standalone"`, 테마 색, 아이콘 192·512.
+- 서비스 워커는 `./sw.js`로 등록해 **앱 폴더 범위**(`/jdrbmmanager/`)만 다룬다. 같은 주소의 다른 앱 페이지를 가로채지 않는다.
+- `manifest.webmanifest`: `name`, `short_name`, `start_url: "./"`, `scope: "./"`, `display: "standalone"`, 테마 색, 아이콘 192·512.
 
 ### 3.9 Firestore 보안 규칙 (초안)
 
@@ -196,7 +203,8 @@ service cloud.firestore {
 ```
 
 - 이 밖의 경로는 모두 거부된다 (규칙에 없으면 기본 거부).
-- 규칙은 `firestore.rules`로 저장소에 두고 배포 때 함께 올린다.
+- 규칙은 `firestore.rules`로 저장소에 두고, 바꿀 때마다 **Firebase 콘솔 → Firestore → 규칙**에 붙여넣어 게시한다. (Firebase CLI를 쓰게 되면 `firebase deploy --only firestore:rules`로 대신할 수 있다.)
+- 허용 UID는 공개 저장소에 올라가도 된다. UID만으로는 로그인할 수 없다.
 
 ### 3.10 JSON 백업·복구와 HTML 내보내기
 
@@ -216,6 +224,35 @@ service cloud.firestore {
 - 로컬 `localStorage` 데이터는 지우지 않는다 (로그아웃 시 로컬 모드용).
 - "시드 데이터만"의 판단: ID 1·2·3의 시드 3개와 제목·URL이 모두 같은 경우.
 
+### 3.12 호스팅 이식성
+
+처음에는 GitHub Pages에 올리고, 나중에 다른 정적 호스팅으로 **앱 코드를 고치지 않고** 옮길 수 있게 한다.
+
+| 원칙 | 이유 |
+|---|---|
+| 앱 안의 모든 경로는 **상대 경로** (`./sw.js`, `./manifest.webmanifest`, `start_url: "./"`, 아이콘) | GitHub Pages는 하위 경로(`/jdrbmmanager/`), 다른 호스팅은 루트(`/`)에서 서비스된다 |
+| 로그인은 **팝업이 기본** (3.7) | 호스팅 주소가 `authDomain`과 달라도 동작한다 |
+| 호스팅 전용 기능(주소 다시 쓰기, 응답 헤더, 리디렉트 설정)에 **의존하지 않는다** | 설정 파일 없이 어디서든 동작한다 |
+| 보안 규칙은 **호스팅과 따로** 관리 (3.9) | 호스팅을 바꿔도 규칙은 그대로 |
+
+**호스팅을 옮길 때 할 일** (앱 코드 변경 없음)
+1. 새 호스팅에 저장소를 연결하거나 파일을 올린다.
+2. Firebase 콘솔 → Authentication → 설정 → **승인된 도메인**에 새 주소를 추가한다.
+3. (Firebase Hosting으로 옮길 때만) `firebase.json` 설정 파일을 추가하고 배포 도구를 준비한다. 배포 도구는 앱 코드가 아니다: PC에 Node.js와 Firebase CLI를 설치해 `firebase deploy`로 올리거나, GitHub Actions 작업 파일을 추가해 GitHub 서버에서 올린다(PC 설치 불필요). `firebaseapp.com` 주소로 옮기면 3.7의 조건에 따라 리디렉트 로그인도 자동으로 쓸 수 있게 된다.
+
+- 클라우드 모드 데이터는 Firestore에 있으므로 새 주소에서 로그인하면 그대로 보인다. **로컬 모드 데이터와 오프라인 캐시는 주소(출처)마다 따로라 따라오지 않는다** → 옮기기 전에 로컬 모드로만 쓴 데이터는 JSON 백업으로 옮긴다.
+
+### 3.13 같은 주소(출처)를 쓰는 다른 페이지
+
+GitHub Pages는 `jaydrobin.github.io` 아래 모든 저장소의 페이지가 **같은 출처**다. 브라우저는 저장 공간(`localStorage`, IndexedDB)을 출처 단위로 나누므로 이 페이지들은 저장 공간을 함께 쓴다.
+
+| 영향 | 판단 |
+|---|---|
+| 다른 페이지의 스크립트가 이 앱의 로그인 정보(IndexedDB)와 북마크를 읽을 수 있음 | 모두 본인 페이지라면 문제없음. **다른 페이지에 신뢰할 수 없는 외부 스크립트(광고·분석 등)를 넣지 않는다.** 그런 페이지가 필요하면 이 앱을 다른 출처로 옮긴다 (3.12) |
+| 저장소 키 충돌 | 키에 `single_file_bookmarks_` 접두어를 쓰므로 없음. Firebase의 저장 공간은 프로젝트별로 이름이 달라 다른 Firebase 앱과 겹치지 않음 |
+| 서비스 워커 충돌 | 앱 폴더 범위로만 등록하므로 없음 (3.8). 단, 사용자 사이트 저장소(`jaydrobin.github.io`)의 루트에 서비스 워커를 두면 모든 하위 경로를 가로챌 수 있으니 두지 않는다 |
+| 브라우저에서 이 사이트 데이터를 지우면 같은 출처의 모든 앱 데이터가 함께 지워짐 | 클라우드 모드 데이터는 Firestore에 남음. 다시 로그인하면 복구됨 |
+
 ## 4. 무료 한도와 예상 사용량
 
 Spark 요금제 무료 한도 (Firebase 가격 페이지, 2026-09-29 확인). **한도는 프로젝트마다 따로** 적용된다.
@@ -228,22 +265,29 @@ Spark 요금제 무료 한도 (Firebase 가격 페이지, 2026-09-29 확인). **
 | Firestore 삭제 | 20,000 / 일 | 수십 / 일 (전체 복구 덮어쓰기 1회 = 500) |
 | Firestore 전송 | 10 GiB / 월 | 수십 MB / 월 |
 | Auth | 월 활성 사용자 50,000명 | 1명 |
-| Hosting 저장 / 전송 | 10 GB / 360 MB·일 | 1 MB 미만 / 수 MB·일 (SDK는 gstatic에서 받으므로 제외) |
+| Hosting | (쓰지 않음. GitHub Pages 사용) | - |
 
 - **읽기가 가장 먼저 한도에 닿는다.** 앱을 열 때 리스너가 문서 수만큼 읽는다. 캐시가 있어도 리스너가 30분 넘게 끊겼다가 다시 연결되면 새 쿼리처럼 전부 다시 읽는 것으로 계산된다. 그래서 `북마크 수 × 하루에 앱을 여는 횟수`가 대략의 최대치다. 북마크가 수천 개로 늘면 다시 계산한다.
 - 한도를 넘으면 과금되지 않고 그날 요청이 거부된다. 앱은 캐시로 계속 보이고, 쓰기는 대기했다가 다음 날 올라간다.
 - Firestore 무료 데이터베이스는 프로젝트당 하나다.
 
-## 5. 사용자가 직접 할 일 (Firebase 콘솔)
+## 5. 사용자가 직접 할 일 (GitHub·Firebase 콘솔)
 
-계정 생성·로그인·결제 설정은 Claude가 대신할 수 없다. 2단계를 시작하기 전에 아래를 마치고, 4번과 5번 값을 Claude에게 알려 준다.
+계정 생성·로그인·결제 설정은 Claude가 대신할 수 없다. **PC에 설치할 도구는 없다** (Node.js 불필요).
 
+**2단계를 시작하기 전에** (1~5번을 마치고 4번 값을 Claude에게 알려 준다)
 1. [Firebase 콘솔](https://console.firebase.google.com/)에서 프로젝트 만들기 (Google 애널리틱스는 꺼도 됨). 요금제는 Spark 그대로 둔다.
 2. **Authentication** → 로그인 방법 → **Google** 사용 설정
 3. **Firestore Database** → 데이터베이스 만들기 → 위치 `asia-northeast3 (서울)` (나중에 바꿀 수 없음) → **프로덕션 모드**
-4. **프로젝트 설정** → 내 앱 → 웹 앱 추가 → 표시되는 `firebaseConfig` 값 (공개돼도 되는 값)
-5. 앱에서 한 번 로그인한 뒤 **Authentication → 사용자**에서 내 **UID** 확인 (규칙의 허용 목록에 넣음)
-6. 배포 도구: Node.js LTS 설치 → `npm install -g firebase-tools` → `firebase login` (본인 계정으로 직접). 배포는 `firebase deploy` 한 번으로 Hosting과 규칙이 함께 올라간다. (열린 질문 Q3)
+4. **프로젝트 설정** → 내 앱 → 웹 앱 추가 (Firebase Hosting 설정은 체크하지 않음) → 표시되는 `firebaseConfig` 값 (공개돼도 되는 값)
+5. **Authentication** → 설정 → **승인된 도메인**에 `jaydrobin.github.io` 추가 (`localhost`는 기본으로 들어 있음)
+6. GitHub 저장소 → **Settings → Pages** → Source: `Deploy from a branch`, Branch: `main`, 폴더 `/ (root)` → 저장. 이후 `main`에 머지할 때마다 `https://jaydrobin.github.io/jdrbmmanager/`에 자동 배포된다. (1단계가 끝난 뒤 바로 켜도 된다.)
+
+**2단계 도중에** (Claude가 요청하면)
+7. 앱에서 한 번 로그인한 뒤 **Authentication → 사용자**에서 내 **UID**를 확인해 알려 준다 (규칙의 허용 목록에 넣음).
+8. Claude가 만든 `firestore.rules` 내용을 **Firestore → 규칙**에 붙여넣고 게시한다.
+
+- 저장소 루트 전체가 공개 사이트로 배포되므로 `CLAUDE.md`, `docs/` 등도 주소로 열 수 있다. 비밀 정보는 없으므로 수용한다. 저장소에 비밀 값(서비스 계정 키 등)을 넣지 않는다.
 
 ## 6. 구현 단계
 
@@ -252,8 +296,8 @@ Spark 요금제 무료 한도 (Firebase 가격 페이지, 2026-09-29 확인). **
 | 단계 | 내용 | 완료 조건 |
 |---|---|---|
 | **1. 저장 계층 분리** (Firebase 없음) | 3.5의 작업 함수와 `store` 인터페이스, LocalStore. `syncAndRender` 호출부를 작업 함수로 교체. 새 ID 규칙(3.4), 제목 길이 제한 | 동작 변화 없음: CLAUDE.md 회귀 테스트 전부 통과 |
-| **2. 로그인과 클라우드 동기화** | 사용자가 5장 1~4번 완료 후. Firebase SDK 로드, 로그인/로그아웃 버튼과 계정 표시, CloudStore(`order` 포함), `onSnapshot`, 첫 로그인 이전(3.11), `firestore.rules`, `firebase.json`, Hosting 배포 | PC와 안드로이드에서 추가·수정·삭제·이동이 서로 반영됨. 다른 Google 계정으로는 읽기·쓰기가 거부됨. Firebase를 못 불러와도 로컬 모드로 동작 |
-| **3. 오프라인과 설치** | `sw.js`, `manifest.webmanifest`, 아이콘, 동기화 상태 표시(동기화됨 / 오프라인 / 올릴 변경 있음) | 안드로이드에서 홈 화면에 추가됨. 비행기 모드에서 앱을 열고 수정 → 연결 후 PC에 반영됨 |
+| **2. 로그인과 클라우드 동기화** | 사용자가 5장 1~6번 완료 후. Firebase SDK 로드, 로그인/로그아웃 버튼과 계정 표시(팝업 기본, 3.7), CloudStore(`order` 포함), `onSnapshot`, 첫 로그인 이전(3.11), `firestore.rules`(사용자가 콘솔에 게시) | GitHub Pages 주소에서 PC와 안드로이드의 추가·수정·삭제·이동이 서로 반영됨. 다른 Google 계정으로는 읽기·쓰기가 거부됨. Firebase를 못 불러와도 로컬 모드로 동작 |
+| **3. 오프라인과 설치** | `sw.js`, `manifest.webmanifest`, 아이콘(모두 상대 경로, 3.12), 동기화 상태 표시(동기화됨 / 오프라인 / 올릴 변경 있음) | 안드로이드에서 홈 화면에 추가됨. 비행기 모드에서 앱을 열고 수정 → 연결 후 PC에 반영됨. `localhost` 루트 경로에서도 같은 동작(이식성 확인) |
 | **4. 문서와 릴리스** | DECISIONS.md(D-017 확정, D-001 대체), CLAUDE.md 규약(6.1), README 사용법, 회귀 테스트 갱신 | 문서가 코드와 일치. 버전 릴리스 |
 
 ### 6.1 CLAUDE.md에 반영할 규약 변경 (4단계, 단계별로 필요한 만큼 먼저 반영해도 됨)
@@ -261,15 +305,16 @@ Spark 요금제 무료 한도 (Firebase 가격 페이지, 2026-09-29 확인). **
 - "상태를 바꾼 뒤 `syncAndRender()`" → "상태 변경은 작업 함수(3.5)로만."
 - Firestore 스냅샷도 외부 입력으로 검증한다.
 - 테스트는 로컬 서버(`localhost`)에서 한다 (모듈 스크립트·서비스 워커·로그인 때문에 `file://`로는 부족함).
+- 앱 안의 경로는 상대 경로로, 호스팅 전용 기능에 의존하지 않는다 (3.12).
 
-## 7. 열린 질문 (구현 전에 정할 것)
+## 7. 확정된 질문
 
-| # | 질문 | 제안 |
+| # | 질문 | 결정 |
 |---|---|---|
 | Q1 | 로그아웃했을 때 무엇을 보여 줄까 | 로그인 전 로컬 목록. 클라우드 캐시는 지움 |
-| Q2 | 쓸 Google 계정은 몇 개인가 (허용 UID 목록) | 1개 |
-| Q3 | 배포 방식 | PC에 Node.js + Firebase CLI를 설치해 직접 배포. (GitHub Actions 자동 배포는 나중에) |
-| Q4 | 주소 | `<프로젝트>.firebaseapp.com` (3.7의 이유). 커스텀 도메인은 쓰지 않음 |
+| Q2 | 쓸 Google 계정은 몇 개인가 (허용 UID 목록) | 1개. 계정마다 목록이 따로(`users/{uid}`)이므로 모든 기기에서 같은 계정으로 로그인한다. 나중에 UID를 규칙에 추가하면 다른 계정도 허용할 수 있다(그 계정은 자기만의 목록을 쓰고, 무료 한도를 함께 씀) |
+| Q3 | 배포 방식 | GitHub Pages가 `main` 브랜치를 자동 배포. 보안 규칙은 Firebase 콘솔에 붙여넣기. PC 도구 설치 없음 |
+| Q4 | 주소 | `https://jaydrobin.github.io/jdrbmmanager/` (공개 저장소). 다른 호스팅으로는 3.12대로 옮긴다 |
 | Q5 | `file://`로 여는 사용법을 유지할까 | 로컬 모드로만 유지 (동기화·오프라인 셸 없음) |
 
 ## 8. 위험과 대응
@@ -281,3 +326,5 @@ Spark 요금제 무료 한도 (Firebase 가격 페이지, 2026-09-29 확인). **
 | 서비스 워커 캐시 때문에 새 버전이 늦게 보임 | `index.html`은 네트워크 우선 |
 | 규칙과 앱의 검증이 어긋나 서버가 쓰기를 거부 | 두 곳의 검증 조건을 이 문서 3.4·3.9에 맞추고, 쓰기 오류를 사용자에게 알림 |
 | 무료 한도 초과 (특히 읽기) | 4장의 계산을 기준으로, 북마크 수가 크게 늘면 다시 검토 |
+| 같은 출처(`jaydrobin.github.io`)의 다른 페이지가 데이터를 읽음 | 그 페이지들에 신뢰할 수 없는 외부 스크립트를 넣지 않음. 필요해지면 다른 출처로 옮김 (3.13, 3.12) |
+| 팝업 로그인이 막힘 | 팝업 허용 안내. Firebase Hosting의 `firebaseapp.com`으로 옮기면 리디렉트 대체 가능 (3.7) |
