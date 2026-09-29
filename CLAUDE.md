@@ -4,6 +4,7 @@
 
 - 기능 목록, 데이터 모델(localStorage·Firestore), 설계 결정(D-NNN), 알려진 문제(K-NN): [docs/DECISIONS.md](docs/DECISIONS.md) — **작업 전에 읽는다.** 동기화 설계는 D-017~D-023.
 - 사용법, Firebase·GitHub Pages 설정, 배포·폰 테스트·호스팅 이전 절차: [README.md](README.md).
+- 진행 중인 설계: 브라우저 북마크 가져오기(D-024)·바뀐 것만 받기(D-025) [docs/IMPORT-DELTA-DESIGN.md](docs/IMPORT-DELTA-DESIGN.md) — 7장의 단계대로 구현한다. 설계와 충돌하는 규약은 해당 단계에서 바꾼다.
 
 ## 구조
 
