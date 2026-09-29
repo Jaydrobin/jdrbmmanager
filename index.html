@@ -182,6 +182,8 @@
   </form>
 </div>
 
+<!-- 배포별 설정(선택). 없거나 비어 있으면 기본 설정을 쓴다 (D-026) -->
+<script src="config.js"></script>
 <script>
   const STORAGE_KEY = 'single_file_bookmarks_v3';
   const LEGACY_STORAGE_KEY = 'single_file_bookmarks_v2'; // v0.3 이하 형식 (addedAt 없음)
@@ -196,8 +198,9 @@
   const CLOUD_COPY_KEY_PREFIX = 'single_file_bookmarks_cloud_copy_'; // + uid. 계정 목록의 사본 (D-025)
   const CLOUD_COPY_VERSION = 1;
 
+  // 기본 Firebase 설정. config.js가 없거나 설정하지 않았으면 이 값을 쓴다 (D-026).
   // 공개돼도 되는 값이다(비밀 키 아님). 데이터는 보안 규칙과 승인된 도메인으로 보호한다.
-  const FIREBASE_CONFIG = {
+  const DEFAULT_FIREBASE_CONFIG = {
     apiKey: 'AIzaSyCIJO3SO5JDv7TNP2PIcu1O601zR45Pl60',
     authDomain: 'jdrbmmanager.firebaseapp.com',
     projectId: 'jdrbmmanager',
@@ -205,6 +208,8 @@
     messagingSenderId: '423101234193',
     appId: '1:423101234193:web:0c2c371bc1513695bf85b0'
   };
+  const FIREBASE_REQUIRED_KEYS = ['apiKey', 'authDomain', 'projectId', 'appId'];
+  const FIREBASE_CONFIG = resolveFirebaseConfig(); // null이면 클라우드 끔
   // 버전을 고정한다. 올릴 때는 세 파일이 같은 버전이어야 한다.
   const FIREBASE_SDK_URL = 'https://www.gstatic.com/firebasejs/12.19.0/';
 
@@ -217,6 +222,8 @@
   // 로그인한 채로 닫았으면 Firebase를 불러오는 동안 로컬 목록 대신 계정 목록의 사본을 보인다(없으면 "불러오는 중").
   // 그 사이에 로컬 목록을 보고 고치면 계정이 아닌 로컬 목록에 저장되기 때문이다 (K-16).
   // 계정이 준비될 때까지 목록을 바꾸는 조작은 막는다 (D-025).
+  // 로그인한 채로 닫은 뒤 클라우드를 껐으면 handleAuthChange가 실행되지 않아 사본이 남으므로 여기서 지운다 (D-026).
+  if (!canUseCloud()) forgetCloudCopy();
   let cloudLoading = canUseCloud() && localStorage.getItem(CLOUD_HINT_KEY) !== null;
   const bootCopy = cloudLoading ? loadCloudCopy(localStorage.getItem(CLOUD_HINT_KEY)) : null;
   let bookmarks = cloudLoading ? (bootCopy ? bootCopy.items : []) : loadBookmarks();
@@ -421,8 +428,31 @@
   const SDK_LOAD_TIMEOUT_MS = 10000;
   const SERVER_FETCH_TIMEOUT_MS = 10000;
 
-  function canUseCloud() {
+  // config.js의 window.APP_CONFIG로 쓸 설정을 정한다 (D-026). null이면 클라우드 끔.
+  // 형식이 틀리면 기본 프로젝트에 조용히 붙지 않도록 클라우드를 끈다.
+  function resolveFirebaseConfig() {
+    const appConfig = window.APP_CONFIG;
+    if (appConfig === undefined) return DEFAULT_FIREBASE_CONFIG;
+    if (appConfig !== null && typeof appConfig === 'object' && !Array.isArray(appConfig)) {
+      if (!('firebase' in appConfig)) return DEFAULT_FIREBASE_CONFIG;
+      const config = appConfig.firebase;
+      if (config === null) return null;
+      if (typeof config === 'object' && !Array.isArray(config) &&
+          FIREBASE_REQUIRED_KEYS.every(key => typeof config[key] === 'string' && config[key] !== '')) {
+        return { ...config };
+      }
+    }
+    console.warn(`config.js의 설정 형식이 올바르지 않아 로컬 모드로 동작합니다. window.APP_CONFIG.firebase에 ${FIREBASE_REQUIRED_KEYS.join(', ')}가 있어야 합니다.`);
+    return null;
+  }
+
+  // http(s)로 열었는지. 서비스 워커는 클라우드 설정과 관계없이 이것만 본다.
+  function isServedOverHttp() {
     return location.protocol === 'http:' || location.protocol === 'https:';
+  }
+
+  function canUseCloud() {
+    return isServedOverHttp() && FIREBASE_CONFIG !== null;
   }
 
   // hasList: 계정 목록(사본)이 보이고 있으면 내보내기는 허용한다.
@@ -479,12 +509,17 @@
     if (user && !cloud) enterCloudMode(user);
     if (!user) {
       // 로그인한 채로 닫았지만 로그인이 풀려 있는 경우(만료 등). 로그아웃과 같이 사본도 지운다 (D-025).
-      const hintUid = localStorage.getItem(CLOUD_HINT_KEY);
-      if (hintUid) localStorage.removeItem(CLOUD_COPY_KEY_PREFIX + hintUid);
-      localStorage.removeItem(CLOUD_HINT_KEY);
+      forgetCloudCopy();
       showLocalListIfLoading();
     }
     updateAuthUi(user);
+  }
+
+  // 로그인한 채로 닫았다는 표시와 그 계정의 사본을 지운다. 사본은 올릴 변경의 대기열이 아니라서 잃는 데이터가 없다.
+  function forgetCloudCopy() {
+    const hintUid = localStorage.getItem(CLOUD_HINT_KEY);
+    if (hintUid) localStorage.removeItem(CLOUD_COPY_KEY_PREFIX + hintUid);
+    localStorage.removeItem(CLOUD_HINT_KEY);
   }
 
   function updateSyncStatus() {
@@ -1518,7 +1553,7 @@
   window.addEventListener('offline', updateSyncStatus);
 
   // 오프라인에서도 앱이 열리도록 (https와 localhost에서만 가능. file://에는 serviceWorker가 없음)
-  if ('serviceWorker' in navigator && canUseCloud()) {
+  if ('serviceWorker' in navigator && isServedOverHttp()) {
     navigator.serviceWorker.register('./sw.js').catch(err => console.warn('서비스 워커를 등록하지 못했습니다.', err));
   }
 </script>

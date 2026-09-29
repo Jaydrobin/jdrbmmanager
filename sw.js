@@ -2,18 +2,21 @@
    ./sw.js로 등록하므로 앱 폴더 범위만 다룬다. 모든 경로는 상대 경로 (호스팅 이식성, D-023). */
 
 // 릴리스할 때마다 올린다. 이름이 바뀌면 activate에서 이전 캐시를 지운다.
-const CACHE_NAME = 'jdrbm-v0.7';
+const CACHE_NAME = 'jdrbm-v0.8';
 // index.html의 FIREBASE_SDK_URL과 같은 버전이어야 한다.
 const SDK_BASE = 'https://www.gstatic.com/firebasejs/12.19.0/';
 const SDK_FILES = ['firebase-app.js', 'firebase-auth.js', 'firebase-firestore.js'].map(file => SDK_BASE + file);
 const APP_SHELL = ['./', './index.html', './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png'];
+// 없어도 되는 파일. 있으면 캐시하고, 없으면 설치를 실패시키지 않는다 (addAll은 하나만 실패해도 전체가 실패).
+const OPTIONAL_FILES = ['./config.js'];
 // 연결이 불안정할 때 앱이 오래 멈춰 있지 않도록, 이 시간 안에 응답이 없으면 캐시로 연다.
 const NETWORK_TIMEOUT_MS = 4000;
 
 self.addEventListener('install', event => {
   event.waitUntil(
     caches.open(CACHE_NAME)
-      .then(cache => cache.addAll([...APP_SHELL, ...SDK_FILES]))
+      .then(cache => cache.addAll([...APP_SHELL, ...SDK_FILES])
+        .then(() => Promise.all(OPTIONAL_FILES.map(file => cache.add(file).catch(() => {})))))
       .then(() => self.skipWaiting())
   );
 });
@@ -39,8 +42,9 @@ self.addEventListener('fetch', event => {
   // Firestore·Auth 통신과 파비콘은 가로채지 않는다 (SDK가 오프라인을 직접 처리).
   if (url.origin !== self.location.origin) return;
 
-  // 새 버전을 바로 받도록 앱 본체는 네트워크 우선.
-  if (request.mode === 'navigate' || url.pathname.endsWith('/index.html') || url.pathname.endsWith('.webmanifest')) {
+  // 새 버전을 바로 받도록 앱 본체는 네트워크 우선. 배포별 설정(config.js)도 바꾸면 곧바로 반영되게 같이 둔다.
+  if (request.mode === 'navigate' || url.pathname.endsWith('/index.html') || url.pathname.endsWith('.webmanifest') ||
+      url.pathname.endsWith('/config.js')) {
     event.respondWith(networkFirst(request));
   } else if (url.pathname.includes('/icons/')) {
     event.respondWith(cacheFirst(request));
