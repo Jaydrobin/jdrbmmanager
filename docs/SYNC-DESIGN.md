@@ -180,6 +180,11 @@ Firestore 경로: `users/{uid}/bookmarks/{문서 ID}`
 | Firestore·Auth 통신, 파비콘 | 가로채지 않음 (SDK가 오프라인을 직접 처리) |
 
 - 캐시 이름에 버전을 넣고(`jdrbm-v5` 등), 릴리스할 때마다 올린다. 이전 캐시는 `activate`에서 지운다.
+- (3단계 구현) 캐시 이름은 `jdrbm-v0.5`(다음 릴리스 버전). `install`에서 앱 셸(`./`, `./index.html`, 매니페스트, 아이콘)과 SDK 세 파일을 미리 받고 `skipWaiting`, `activate`에서 `clients.claim`. SDK 버전은 `sw.js`의 `SDK_BASE`에도 적혀 있어 `index.html`과 함께 고쳐야 한다(CLAUDE.md 규약). 미리 받지 못한 다른 버전의 `firebasejs` 파일도 캐시 우선으로 저장한다.
+- (3단계 구현) 네트워크 우선에 **4초 제한**을 더했다. 연결이 불안정한 폰에서 응답을 끝없이 기다리지 않고 캐시로 연다(네트워크 응답은 뒤에 도착하면 캐시만 갱신).
+- (3단계 구현) 아이콘은 PowerShell(System.Drawing)로 만든 파란 바탕에 흰 책갈피. 그림을 가운데 안전 영역 안에 둬서 `any`·`maskable` 겸용.
+- (3단계 구현) 동기화 상태는 네 가지: `✓ 동기화됨` / `… 연결 중`(온라인인데 서버 응답 전, 스냅샷 `fromCache`) / `⬆ 올릴 변경 있음`(`waitForPendingWrites`가 1초 넘게 안 끝남) / `⚠ 오프라인`(`navigator.onLine`이 false). 설계의 세 가지에 "연결 중"을 더했다. 앱을 열 때마다 잠깐 "오프라인"으로 보이지 않게 하기 위해서다.
+- (3단계 구현) K-16 해결: 로그인 중인 uid를 `single_file_bookmarks_cloud_uid`에 기록해 두고, 다음에 열 때 있으면 로컬 목록 대신 "계정 목록을 불러오는 중…"을 보이며 추가·복구·내보내기 버튼을 막는다. 첫 스냅샷이 오면 풀고, SDK 로드 실패(10초 제한)나 로그인이 풀려 있으면 로컬 목록을 보인다.
 - 서비스 워커는 `https://`와 `localhost`에서만 동작한다. `file://`로 열면 오프라인 셸이 없다(로컬 모드는 여전히 동작).
 - 서비스 워커는 `./sw.js`로 등록해 **앱 폴더 범위**(`/jdrbmmanager/`)만 다룬다. 같은 주소의 다른 앱 페이지를 가로채지 않는다.
 - `manifest.webmanifest`: `name`, `short_name`, `start_url: "./"`, `scope: "./"`, `display: "standalone"`, 테마 색, 아이콘 192·512.

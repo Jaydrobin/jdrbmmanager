@@ -4,6 +4,11 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>나만의 북마크 관리자</title>
+  <!-- 홈 화면에 추가(설치)와 오프라인용. 경로는 모두 상대 경로 (SYNC-DESIGN.md 3.12) -->
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png" type="image/png">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <meta name="theme-color" content="#2563eb">
   <style>
     /* 라이트 테마 변수 */
     :root {
@@ -51,6 +56,9 @@
     h1 { font-size: 1.5rem; display: flex; align-items: center; gap: 8px; font-weight: 700; }
     .btn-group { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
     .account-label { font-size: 0.8rem; color: var(--text-muted); max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .sync-status { font-size: 0.8rem; color: var(--text-muted); white-space: nowrap; }
+    .sync-status.is-offline { color: var(--danger); }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
     /* button의 display 지정이 hidden 속성을 덮지 않도록 */
     [hidden] { display: none !important; }
 
@@ -122,15 +130,17 @@
   <header>
     <h1>🔖 북마크 매니저</h1>
     <div class="btn-group">
+      <span id="syncStatus" class="sync-status" hidden></span>
       <span id="accountLabel" class="account-label" hidden></span>
       <!-- Firebase를 불러온 뒤에만 보인다 (로컬 모드에서는 숨김) -->
       <button class="btn-outline" id="authBtn" onclick="toggleAuth()" hidden>🔑 로그인</button>
       <button class="btn-outline btn-icon" id="themeToggleBtn" onclick="toggleTheme()" title="테마 전환">🌙</button>
-      <button class="btn-outline" onclick="exportHTML()" title="브라우저에서 바로 가져올 수 있는 HTML로 내보내기">🌐 HTML 내보내기</button>
-      <button class="btn-outline" onclick="exportJSON()" title="전체 백업 JSON 다운로드">💾 JSON 백업</button>
-      <button class="btn-outline" onclick="document.getElementById('fileInput').click()" title="JSON 백업 파일 복구">📂 복구</button>
+      <!-- data-requires-list: 계정 목록을 불러오는 동안 비활성화 (K-16) -->
+      <button class="btn-outline" onclick="exportHTML()" title="브라우저에서 바로 가져올 수 있는 HTML로 내보내기" data-requires-list>🌐 HTML 내보내기</button>
+      <button class="btn-outline" onclick="exportJSON()" title="전체 백업 JSON 다운로드" data-requires-list>💾 JSON 백업</button>
+      <button class="btn-outline" onclick="document.getElementById('fileInput').click()" title="JSON 백업 파일 복구" data-requires-list>📂 복구</button>
       <input type="file" id="fileInput" accept=".json" style="display:none" onchange="importJSON(event)">
-      <button class="btn-primary" onclick="openModal()">+ 북마크 추가</button>
+      <button class="btn-primary" onclick="openModal()" data-requires-list>+ 북마크 추가</button>
     </div>
   </header>
 
@@ -179,6 +189,7 @@
   const MAX_URL_LENGTH = 2048;
   const MAX_CATEGORY_LENGTH = 100;
   const MIGRATED_KEY_PREFIX = 'single_file_bookmarks_migrated_'; // + uid. 첫 로그인 이전을 물었는지
+  const CLOUD_HINT_KEY = 'single_file_bookmarks_cloud_uid'; // 로그인한 채로 닫았는지 (K-16)
 
   // 공개돼도 되는 값이다(비밀 키 아님). 데이터는 보안 규칙과 승인된 도메인으로 보호한다.
   const FIREBASE_CONFIG = {
@@ -198,7 +209,10 @@
     { id: 3, title: 'YouTube', url: 'https://www.youtube.com', category: '미디어', addedAt: null }
   ];
 
-  let bookmarks = loadBookmarks();
+  // 로그인한 채로 닫았으면 Firebase를 불러오는 동안 로컬 목록 대신 "불러오는 중"을 보인다.
+  // 그 사이에 로컬 목록을 보고 고치면 계정이 아닌 로컬 목록에 저장되기 때문이다 (K-16).
+  let cloudLoading = canUseCloud() && localStorage.getItem(CLOUD_HINT_KEY) !== null;
+  let bookmarks = cloudLoading ? [] : loadBookmarks();
   let store = createLocalStore();
 
   /* ------------- 데이터 검증 및 불러오기 ------------- */
@@ -368,17 +382,38 @@
   let firebase = null; // { app, auth, authApi, fs }
   let cloud = null;    // 로그인 중일 때 { uid, db, unsubscribe, migrationChecked }
   let lastWriteErrorAt = 0;
+  // 연결이 불안정해 SDK가 끝없이 받아지는 동안 "불러오는 중"에 갇히지 않도록
+  const SDK_LOAD_TIMEOUT_MS = 10000;
+
+  function canUseCloud() {
+    return location.protocol === 'http:' || location.protocol === 'https:';
+  }
+
+  function setCloudLoading(on) {
+    cloudLoading = on;
+    document.querySelectorAll('[data-requires-list]').forEach(button => { button.disabled = on; });
+  }
+
+  // 계정 목록을 기다리다 포기할 때(SDK 실패, 로그인 풀림) 로컬 목록을 보인다.
+  function showLocalListIfLoading() {
+    if (!cloudLoading) return;
+    setCloudLoading(false);
+    bookmarks = loadBookmarks();
+    renderBookmarks();
+  }
 
   async function initCloud() {
-    if (location.protocol !== 'http:' && location.protocol !== 'https:') return;
+    if (!canUseCloud()) return;
     try {
       // 정적 import는 실패하면 스크립트 전체가 멈추므로 동적 import로 불러온다.
-      const [appApi, authApi, fs] = await Promise.all(
-        ['firebase-app.js', 'firebase-auth.js', 'firebase-firestore.js'].map(file => import(FIREBASE_SDK_URL + file)));
+      const timeout = new Promise((resolve, reject) => setTimeout(() => reject(new Error('timeout')), SDK_LOAD_TIMEOUT_MS));
+      const [appApi, authApi, fs] = await Promise.race([Promise.all(
+        ['firebase-app.js', 'firebase-auth.js', 'firebase-firestore.js'].map(file => import(FIREBASE_SDK_URL + file))), timeout]);
       const app = appApi.initializeApp(FIREBASE_CONFIG);
       firebase = { app, auth: authApi.getAuth(app), authApi, fs };
     } catch (err) {
       console.warn('Firebase를 불러오지 못해 로컬 모드로 동작합니다.', err);
+      showLocalListIfLoading();
       return;
     }
     // 리디렉트 로그인은 앱 주소가 authDomain과 같을 때만 쓴다 (SYNC-DESIGN.md 3.7).
@@ -391,7 +426,52 @@
   function handleAuthChange(user) {
     if (cloud && (!user || user.uid !== cloud.uid)) leaveCloudMode();
     if (user && !cloud) enterCloudMode(user);
+    if (!user) {
+      // 로그인한 채로 닫았지만 로그인이 풀려 있는 경우(만료 등)
+      localStorage.removeItem(CLOUD_HINT_KEY);
+      showLocalListIfLoading();
+    }
     updateAuthUi(user);
+  }
+
+  function updateSyncStatus() {
+    const status = document.getElementById('syncStatus');
+    status.hidden = !cloud;
+    if (!cloud) return;
+    const offline = !navigator.onLine;
+    status.classList.toggle('is-offline', offline);
+    if (offline) {
+      status.textContent = cloud.pending ? '⚠ 오프라인 · 올릴 변경 있음' : '⚠ 오프라인';
+      status.title = '연결되면 자동으로 동기화됩니다';
+    } else if (cloud.pending) {
+      status.textContent = '⬆ 올릴 변경 있음';
+      status.title = '서버에 올리는 중입니다';
+    } else if (cloud.fromCache) {
+      status.textContent = '… 연결 중';
+      status.title = '서버와 연결하는 중입니다. 그동안의 변경은 연결되면 올라갑니다';
+    } else {
+      status.textContent = '✓ 동기화됨';
+      status.title = '모든 변경이 서버에 저장됐습니다';
+    }
+  }
+
+  // 아직 서버에 올라가지 않은 쓰기가 있는지 본다. 오프라인에서 다시 연 경우처럼 이전 세션의 쓰기도 포함된다.
+  function watchPendingWrites() {
+    const session = cloud;
+    if (!session) return;
+    const generation = ++session.pendingGeneration;
+    // 온라인에서는 금방 끝나므로 1초가 지나도 남아 있을 때만 표시한다 (깜박임 방지).
+    const timer = setTimeout(() => {
+      if (cloud !== session || generation !== session.pendingGeneration) return;
+      session.pending = true;
+      updateSyncStatus();
+    }, 1000);
+    firebase.fs.waitForPendingWrites(session.db).then(() => {
+      clearTimeout(timer);
+      if (cloud !== session || generation !== session.pendingGeneration) return;
+      session.pending = false;
+      updateSyncStatus();
+    }, () => clearTimeout(timer));
   }
 
   function updateAuthUi(user) {
@@ -448,21 +528,32 @@
     const db = fs.initializeFirestore(firebase.app, {
       localCache: fs.persistentLocalCache({ tabManager: fs.persistentMultipleTabManager() })
     });
-    const session = { uid: user.uid, db, unsubscribe: null, migrationChecked: false };
+    const session = {
+      uid: user.uid, db, unsubscribe: null, migrationChecked: false,
+      fromCache: true, pending: false, pendingGeneration: 0
+    };
     const cloudStore = createCloudStore(db, user.uid);
     cloud = session;
     store = cloudStore;
-    // 첫 스냅샷 전에 로컬 목록을 조작해 클라우드에 쓰지 않도록 비워 둔다.
+    localStorage.setItem(CLOUD_HINT_KEY, user.uid);
+    // 첫 스냅샷 전에 로컬 목록을 조작해 클라우드에 쓰지 않도록 비우고 "불러오는 중"을 보인다.
+    setCloudLoading(true);
     bookmarks = [];
     renderBookmarks();
+    updateSyncStatus();
+    watchPendingWrites();
 
     session.unsubscribe = fs.onSnapshot(cloudStore.query, { includeMetadataChanges: true }, snapshot => {
       const list = cloudStore.fromSnapshot(snapshot);
+      const wasLoading = cloudLoading;
+      if (wasLoading) setCloudLoading(false);
       // 내 기기의 쓰기는 이미 화면에 반영돼 있다. 같으면 다시 그리지 않아야 이동 버튼의 포커스가 유지된다.
-      if (JSON.stringify(list) !== JSON.stringify(bookmarks)) {
+      if (wasLoading || JSON.stringify(list) !== JSON.stringify(bookmarks)) {
         bookmarks = list;
         renderBookmarks();
       }
+      session.fromCache = snapshot.metadata.fromCache;
+      updateSyncStatus();
       // 서버 목록을 받은 뒤에야 클라우드가 비었는지 알 수 있다.
       if (!snapshot.metadata.fromCache && !session.migrationChecked) {
         session.migrationChecked = true;
@@ -483,8 +574,11 @@
     unsubscribe();
     cloud = null;
     store = createLocalStore();
+    localStorage.removeItem(CLOUD_HINT_KEY);
+    setCloudLoading(false);
     bookmarks = loadBookmarks();
     renderBookmarks();
+    updateSyncStatus();
     // 로그아웃하면 이 기기의 클라우드 캐시를 지운다 (SYNC-DESIGN.md 3.3). 앱이 다른 탭에도 열려 있으면 실패할 수 있다.
     fs.terminate(db)
       .then(() => fs.clearIndexedDbPersistence(db))
@@ -542,6 +636,7 @@
     // 오프라인에서는 서버가 받을 때까지 끝나지 않으므로 기다리지 않고 오류만 받는다.
     function track(promise) {
       promise.catch(reportWriteError);
+      watchPendingWrites();
     }
 
     // 다른 기기에서 지운 북마크를 고치거나 옮기면, 일부 필드만 보낸 쓰기라 규칙이 먼저 거부한다(permission-denied).
@@ -553,6 +648,7 @@
           .then(snap => snap.exists() ? reportWriteError(err) : console.warn('이미 삭제된 북마크라 변경을 버렸습니다.', err))
           .catch(() => reportWriteError(err));
       });
+      watchPendingWrites();
     }
 
     function commitInBatches(ops) {
@@ -706,7 +802,7 @@
     grid.innerHTML = '';
 
     if (filtered.length === 0) {
-      grid.innerHTML = `<p style="grid-column: 1/-1; text-align: center; color: var(--text-muted); padding: 48px 0;">북마크가 없습니다.</p>`;
+      grid.innerHTML = `<p style="grid-column: 1/-1; text-align: center; color: var(--text-muted); padding: 48px 0;">${cloudLoading ? '계정 목록을 불러오는 중…' : '북마크가 없습니다.'}</p>`;
       return;
     }
 
@@ -995,8 +1091,16 @@
 
   // 초기화 실행
   initTheme();
+  setCloudLoading(cloudLoading);
   renderBookmarks();
   initCloud();
+  window.addEventListener('online', updateSyncStatus);
+  window.addEventListener('offline', updateSyncStatus);
+
+  // 오프라인에서도 앱이 열리도록 (https와 localhost에서만 가능. file://에는 serviceWorker가 없음)
+  if ('serviceWorker' in navigator && canUseCloud()) {
+    navigator.serviceWorker.register('./sw.js').catch(err => console.warn('서비스 워커를 등록하지 못했습니다.', err));
+  }
 </script>
 </body>
 </html>

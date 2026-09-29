@@ -1,20 +1,25 @@
 # CLAUDE.md
 
-HTML 파일 하나로 된 북마크 관리자. 빌드·패키지·자동 테스트가 없고, `index.html`을 브라우저로 열면 로컬 모드로 실행된다. `http(s)`로 열면 Google 로그인과 Firestore 동기화(클라우드 모드)를 쓸 수 있다. Firestore 보안 규칙은 `firestore.rules`에 두고 사용자가 Firebase 콘솔에 게시한다.
+정적 파일 몇 개로 된 북마크 관리자. 빌드·패키지·자동 테스트가 없고, `index.html`을 브라우저로 열면 로컬 모드로 실행된다. `http(s)`로 열면 Google 로그인과 Firestore 동기화(클라우드 모드)를 쓸 수 있다. Firestore 보안 규칙은 `firestore.rules`에 두고 사용자가 Firebase 콘솔에 게시한다. `https`·`localhost`에서는 서비스 워커(`sw.js`)가 앱 파일과 SDK를 캐시해 오프라인에서도 열리고, `manifest.webmanifest`·`icons/`로 홈 화면에 설치할 수 있다.
 
 - 기능 목록, 데이터 모델, 설계 결정(D-NNN), 알려진 문제(K-NN): [docs/DECISIONS.md](docs/DECISIONS.md) — **작업 전에 읽는다.**
-- 확정된 설계: 여러 기기 동기화(Firebase) [docs/SYNC-DESIGN.md](docs/SYNC-DESIGN.md) — 6장의 단계 순서대로 구현한다. 1·2단계는 구현됐다 (`feat/multi-device-sync`). 3단계에서 파일이 늘면 아래 구조·원칙을 함께 고친다.
+- 확정된 설계: 여러 기기 동기화(Firebase) [docs/SYNC-DESIGN.md](docs/SYNC-DESIGN.md) — 6장의 단계 순서대로 구현한다. 1~3단계는 구현됐다 (`feat/multi-device-sync`). 4단계에서 이 문서의 내용을 옮기고 설계도를 지운다.
 
 ## 구조
 
-`index.html` 한 파일에 `<style>` → 마크업 → `<script>` 순서로 들어 있다. 스크립트는 주석으로 구역을 나눈다.
+| 파일 | 내용 |
+|---|---|
+| `index.html` | 앱 본체. `<style>` → 마크업 → `<script>` 순서. 스크립트는 아래 표처럼 주석으로 구역을 나눈다 |
+| `sw.js` | 서비스 워커. `CACHE_NAME`(릴리스마다 올림), `SDK_BASE`(`index.html`의 SDK 버전과 같게), 앱 셸은 네트워크 우선(4초 넘으면 캐시), SDK·아이콘은 캐시 우선, 다른 출처는 가로채지 않음 |
+| `manifest.webmanifest`, `icons/icon-192.png`, `icons/icon-512.png` | 홈 화면 설치용. 아이콘은 `any`·`maskable` 겸용(가운데 안전 영역 안에 그림) |
+| `firestore.rules` | Firestore 보안 규칙 (허용 UID, 항목 검증). 저장소에 두고 콘솔에 붙여넣어 게시 |
 
 | 구역 주석 | 내용 |
 |---|---|
 | (상단 상수) | `STORAGE_KEY`(v3), `LEGACY_STORAGE_KEY`(v2), `THEME_KEY`, `MAX_*_LENGTH`(규칙과 같은 길이 제한), `FIREBASE_CONFIG`, `FIREBASE_SDK_URL`(버전 고정), 시드 데이터로 `bookmarks` 초기화, `store` 생성 |
 | `데이터 검증 및 불러오기` | `isSafeUrl`, `truncateText`, `normalizeBookmark`, `generateId`, `sanitizeBookmarks`, `loadBookmarks` (v2 → v3 마이그레이션, 시드는 복사본) |
 | `저장소 및 상태 작업` | `createLocalStore`(`store`), 작업 함수 `addBookmark` / `updateBookmark` / `removeBookmark` / `moveBookmark` / `replaceAll` / `mergeAll` |
-| `로그인 및 클라우드 동기화` | `initCloud`(SDK 동적 import), `login`/`logout`/`toggleAuth`, `enterCloudMode`/`leaveCloudMode`(스냅샷 리스너), `offerLocalMigration`, `createCloudStore`(`order`로 순서 저장) |
+| `로그인 및 클라우드 동기화` | `initCloud`(SDK 동적 import, 10초 제한), `setCloudLoading`(불러오는 중, K-16), `login`/`logout`/`toggleAuth`, `updateSyncStatus`/`watchPendingWrites`(동기화 상태), `enterCloudMode`/`leaveCloudMode`(스냅샷 리스너), `offerLocalMigration`, `createCloudStore`(`order`로 순서 저장) |
 | `다크 모드` | `initTheme` / `applyTheme` / `toggleTheme` (저장은 `toggleTheme`에서만) |
 | `파비콘 및 렌더링` | `getFaviconUrl`, `getVisibleBookmarks`(검색·필터), `renderBookmarks` (그리드 전체 재생성) |
 | `드래그 앤 드롭` | `setupDragEvents`, `moveBookmarkBy` (이동 버튼) |
@@ -22,13 +27,15 @@ HTML 파일 하나로 된 북마크 관리자. 빌드·패키지·자동 테스�
 | `모달 및 CRUD` | 모달 열기/닫기, Esc 처리, `saveBookmark`(`<form>` submit), `editBookmark`, `deleteBookmark` |
 | `HTML 북마크 내보내기` | `exportHTML` (Netscape 형식), `downloadFile` |
 | `JSON 백업 / 복구` | `exportJSON`, `importJSON`, `escapeHtml` |
+| (끝) | 초기화, `online`/`offline` 이벤트, 서비스 워커 등록 |
 
 ## 작성 규약
 
 ### 원칙
 - **빌드 없음. 정적 파일 몇 개. 외부 코드는 버전 고정한 Firebase SDK만 (D-017).** 다른 라이브러리·CDN·빌드 도구가 필요하면 먼저 사용자와 상의하고 DECISIONS.md에 결정을 추가한다.
 - 새 외부 네트워크 요청을 추가하지 않는다. 허용: 파비콘(D-008), `www.gstatic.com/firebasejs/`, Firebase SDK가 스스로 하는 Auth·Firestore 통신.
-- Firebase SDK는 **동적 `import()`**로 불러온다. 불러오지 못하거나 `file://`로 열어도 로컬 모드로 동작해야 한다. SDK 버전을 올리면 세 파일(`firebase-app/auth/firestore.js`)을 같은 버전으로 맞춘다.
+- Firebase SDK는 **동적 `import()`**로 불러온다. 불러오지 못하거나 `file://`로 열어도 로컬 모드로 동작해야 한다. SDK 버전을 올리면 세 파일(`firebase-app/auth/firestore.js`)을 같은 버전으로 맞추고, `index.html`의 `FIREBASE_SDK_URL`과 `sw.js`의 `SDK_BASE`를 함께 고친다.
+- 앱 파일(`index.html`, `sw.js`, 매니페스트, 아이콘)을 바꿔 릴리스할 때는 `sw.js`의 `CACHE_NAME`을 올린다. 캐시할 파일을 추가하면 `sw.js`의 `APP_SHELL`에도 넣는다.
 - 앱 안의 경로는 상대 경로로 쓰고, 호스팅 전용 기능(주소 다시 쓰기·응답 헤더·리디렉트 설정)에 의존하지 않는다.
 - 요청받은 범위만 고친다. 김에 리팩터링하지 않는다.
 

@@ -12,7 +12,7 @@
 
 | 항목 | 내용 |
 |---|---|
-| 구성 | `index.html` 한 파일 (CSS → HTML → JS 순서, 약 630줄) |
+| 구성 | `index.html` (CSS → HTML → JS 순서, 앱 본체) + `sw.js`(서비스 워커) + `manifest.webmanifest`·`icons/`(설치용) + `firestore.rules`(보안 규칙, 콘솔에 게시) |
 | 실행 | 브라우저로 `index.html` 열기 |
 | 저장소 | `localStorage` (브라우저·출처별로 분리됨). 로그인하면 Firestore (D-017, 구현 중) |
 | 외부 요청 | 파비콘 이미지(Google S2). `http(s)`로 열었을 때 버전 고정한 Firebase SDK(`www.gstatic.com/firebasejs/`)와 그 SDK의 Auth·Firestore 통신 (D-017) |
@@ -37,6 +37,9 @@
 | 모달 | Enter로 저장, Esc·[취소]·바깥 영역 클릭으로 닫기. 이름·URL이 비면 브라우저가 저장을 막음 | `saveBookmark`, `closeModal`, `handleOverlayClick` |
 | 로그인·동기화 (구현 중, D-017) | `http(s)`로 열면 [🔑 로그인] 버튼. Google 팝업 로그인 → 클라우드 모드(Firestore, 다른 기기의 변경이 자동 반영, 오프라인 쓰기는 연결되면 올라감). 로그아웃 → 로컬 목록으로 돌아가고 클라우드 캐시를 지움. 올라가지 않은 변경이 있으면 먼저 물음 | `initCloud`, `login`, `logout`, `enterCloudMode`, `leaveCloudMode`, `createCloudStore` |
 | 첫 로그인 이전 | 기기마다 한 번, 로컬 목록에 사용자 데이터가 있으면 계정에 올릴지(합칠지) 물음. 시드 데이터만 있으면 묻지 않음 | `offerLocalMigration` |
+| 동기화 상태 (구현 중, D-017) | 로그인 중 헤더에 `✓ 동기화됨` / `… 연결 중` / `⬆ 올릴 변경 있음` / `⚠ 오프라인`(빨간색, 올릴 변경이 있으면 함께 표시). 올릴 변경은 1초 넘게 남아 있을 때만 표시 | `updateSyncStatus`, `watchPendingWrites` |
+| 불러오는 중 표시 | 로그인한 채로 닫았다가 열면, 계정 목록이 올 때까지 로컬 목록 대신 "계정 목록을 불러오는 중…"을 보이고 추가·복구·내보내기 버튼을 막음 (K-16) | `setCloudLoading`, `showLocalListIfLoading` |
+| 오프라인·설치 (구현 중, D-017) | 서비스 워커가 앱 파일과 Firebase SDK를 캐시해 오프라인에서도 열림(`https`·`localhost`). 매니페스트·아이콘으로 홈 화면에 추가 가능 | `sw.js`, `manifest.webmanifest` |
 
 ## 3. 데이터 모델과 저장소
 
@@ -64,6 +67,7 @@
 | `single_file_bookmarks_v2` | v0.3 이하 형식. v3 키가 없을 때 한 번 읽어 v3로 옮기고, 지우지 않고 남겨 둠 |
 | `single_file_bookmarks_theme` | `'light'` 또는 `'dark'`. 사용자가 직접 전환했을 때만 저장됨 |
 | `single_file_bookmarks_migrated_<uid>` | 첫 로그인 이전을 물은 시각(ms). 기기·계정마다 한 번만 묻기 위함 |
+| `single_file_bookmarks_cloud_uid` | 로그인 중인 uid. 로그인할 때 쓰고 로그아웃할 때 지움. 다음에 열 때 "불러오는 중"을 보일지 정함 (K-16) |
 | `firestore_*` | Firestore SDK가 여러 탭 조율에 쓰는 키 (앱이 직접 쓰지 않음) |
 
 - 키가 없으면 시드 데이터 3개(Google, GitHub, YouTube)로 시작합니다. 모두 삭제하면 `[]`가 저장되므로 시드가 다시 나타나지 않습니다.
@@ -196,7 +200,8 @@
 | K-13 | 낮음 | 모달 제목 초기값(`북마크 추가`)과 코드 값(`새 북마크 추가`)이 다름 | `index.html:142`, `openModal` | 해결 (267d928) |
 | K-14 | 낮음 | `exportHTML`과 `exportJSON`의 다운로드 코드가 중복 | `index.html:415-423`, `428-436` | 해결 (267d928) |
 | K-15 | 중간 | 저장된 목록이 없을 때 `loadBookmarks`가 시드 상수 `DEFAULT_BOOKMARKS`를 복사하지 않고 그대로 돌려줌. 시드 상태에서 추가·수정하면 상수가 바뀌어, 첫 로그인 이전이 로컬 목록을 "시드만 있음"으로 잘못 보고 묻지 않음 | `loadBookmarks`, `readStoredBookmarks` | 해결 (8e960a2) |
-| K-16 | 낮음 | 로그인한 채로 앱을 열면 Firebase SDK를 불러오는 동안(수백 ms~수 초) 로컬 목록이 잠깐 보이고, 그 사이의 변경은 로컬 목록에 저장됨 | `initCloud` | 미해결 (3단계의 동기화 상태 표시·SDK 캐시와 함께 검토) |
+| K-16 | 낮음 | 로그인한 채로 앱을 열면 Firebase SDK를 불러오는 동안(수백 ms~수 초) 로컬 목록이 잠깐 보이고, 그 사이의 변경은 로컬 목록에 저장됨 | `initCloud` | 해결 (D-017 3단계 커밋) |
+| K-17 | 중간 | 안드로이드 삼성 인터넷에서 Google 계정을 고르면 "연결 프로그램" 창(지메일·아웃룩)이 뜨고 로그인이 끝나지 않음. 로그인 중의 주소를 브라우저가 다른 앱으로 넘기는 것으로 추정 (확인 못 함). 앱의 다른 기능은 영향 없음 | `login` (팝업 로그인) | 미해결. 안드로이드는 크롬 사용(설계 대상). 삼성 인터넷의 "다른 앱에서 링크 열기"를 끄면 될 수 있음(미확인) |
 
 ## 6. 새 결정 추가 방법
 
