@@ -2,7 +2,7 @@
    ./sw.js로 등록하므로 앱 폴더 범위만 다룬다. 모든 경로는 상대 경로 (호스팅 이식성, D-023). */
 
 // 릴리스할 때마다 올린다. 이름이 바뀌면 activate에서 이전 캐시를 지운다.
-const CACHE_NAME = 'jdrbm-v0.5';
+const CACHE_NAME = 'jdrbm-v0.6';
 // index.html의 FIREBASE_SDK_URL과 같은 버전이어야 한다.
 const SDK_BASE = 'https://www.gstatic.com/firebasejs/12.19.0/';
 const SDK_FILES = ['firebase-app.js', 'firebase-auth.js', 'firebase-firestore.js'].map(file => SDK_BASE + file);

@@ -1,5 +1,5 @@
 # jdrbmmanager
-A lightweight, build-free bookmark manager: drag-and-drop (plus touch- and keyboard-friendly move buttons) reordering, dark mode that follows your OS, browser-compatible HTML/JSON export, and optional Google sign-in to sync across devices (Firebase) with offline support and home-screen install.
+A lightweight, build-free bookmark manager: drag-and-drop (plus touch- and keyboard-friendly move buttons) reordering, dark mode that follows your OS, browser bookmark import, browser-compatible HTML/JSON export, and optional Google sign-in to sync across devices (Firebase) with offline support and home-screen install.
 
 빌드 없이 정적 파일 몇 개로 동작하는 개인용 북마크 관리자입니다.
 
@@ -11,6 +11,7 @@ A lightweight, build-free bookmark manager: drag-and-drop (plus touch- and keybo
 - 북마크 추가·수정·삭제, 검색(제목·URL), 카테고리 필터
 - 드래그 앤 드롭 또는 [←]/[→] 버튼으로 순서 변경
 - 다크 모드 (직접 고르기 전에는 OS 설정을 따름)
+- **브라우저 북마크 가져오기**: 크롬·엣지·파이어폭스에서 내보낸 북마크 HTML을 불러옴. 폴더는 카테고리가 되고, 이미 있는 주소는 건너뜀
 - HTML 내보내기(크롬·엣지·파이어폭스에서 가져오기 가능), JSON 백업·복구(덮어쓰기/병합)
 - **Google 로그인으로 여러 기기 동기화** (Firestore). 한 기기의 변경이 몇 초 안에 다른 기기에 반영됨
 - **오프라인 사용과 홈 화면 설치**: 한 번 연 뒤에는 네트워크 없이도 열고 고칠 수 있고, 연결되면 자동으로 올라감
@@ -33,8 +34,19 @@ A lightweight, build-free bookmark manager: drag-and-drop (plus touch- and keybo
 
 > **삼성 인터넷**에서 Google 계정을 고른 뒤 앱 선택 창(지메일·아웃룩)이 떠 로그인이 끝나지 않으면, 삼성 인터넷 설정 → **보안 및 개인정보 보호** → **앱에서 바로 링크 열기 차단**을 끄고 다시 로그인하세요 (K-17).
 
+### 브라우저 북마크 가져오기
+1. 브라우저에서 북마크를 HTML 파일로 내보냅니다.
+   - 크롬: 북마크 관리자(`Ctrl+Shift+O`) → 오른쪽 위 ⋮ → **북마크 내보내기**
+   - 엣지: 즐겨찾기(`Ctrl+Shift+O`) → ⋯ → **즐겨찾기 내보내기**
+   - 파이어폭스: 북마크 관리(`Ctrl+Shift+O`) → **가져오기 및 백업** → **HTML로 북마크 내보내기**
+2. 앱의 **📂 가져오기** → 그 파일을 고르고, 가져올 개수를 확인합니다.
+
+- 기존 목록을 덮어쓰지 않고 목록 맨 앞에 더합니다. 이미 있는 주소와 `http(s)`가 아닌 주소(`javascript:` 북마크릿 등)는 건너뜁니다.
+- 폴더는 카테고리가 됩니다. 중첩 폴더는 가장 안쪽 폴더 이름을 쓰고, 북마크바·기타 북마크 같은 브라우저 기본 폴더는 카테고리로 쓰지 않습니다. 추가 시각은 브라우저의 값을 그대로 가져옵니다.
+- 이 앱의 **🌐 HTML 내보내기** 파일도 가져올 수 있어, 카테고리와 함께 되돌릴 수 있습니다.
+
 ### 백업
-동기화와 별개로 **💾 JSON 백업**을 가끔 받아 두세요. 로컬·클라우드 어느 모드에서 만든 백업도 다른 모드에서 복구할 수 있습니다.
+동기화와 별개로 **💾 JSON 백업**을 가끔 받아 두세요. 복구는 **📂 가져오기**에서 백업 파일을 고르면 되고, 로컬·클라우드 어느 모드에서 만든 백업도 다른 모드에서 복구할 수 있습니다.
 
 ## 설치·배포
 
@@ -69,7 +81,7 @@ PC에 설치할 도구는 없습니다(Node.js 불필요). Firebase는 **Spark(�
 `main`에 머지하면 1~2분 뒤 자동 배포됩니다. 규칙(`firestore.rules`)을 바꿨다면 콘솔에 따로 게시해야 합니다.
 
 **릴리스 전에 할 일**
-- 앱 파일을 바꿨으면 `sw.js`의 `CACHE_NAME`을 올린다 (예: `jdrbm-v0.5` → `jdrbm-v0.6`). 그래야 설치된 앱이 이전 캐시를 버린다.
+- 앱 파일을 바꿨으면 `sw.js`의 `CACHE_NAME`을 올린다 (예: `jdrbm-v0.6` → `jdrbm-v0.7`). 그래야 설치된 앱이 이전 캐시를 버린다.
 - Firebase SDK 버전을 올릴 때는 `index.html`의 `FIREBASE_SDK_URL`과 `sw.js`의 `SDK_BASE`를 같은 버전으로 함께 고친다.
 
 배포 직후 폰에서는 이전 버전이 한 번 보일 수 있습니다. 앱을 다시 열면 새 버전으로 바뀝니다.

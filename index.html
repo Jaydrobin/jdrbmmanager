@@ -138,8 +138,8 @@
       <!-- data-requires-list: 계정 목록을 불러오는 동안 비활성화 (K-16) -->
       <button class="btn-outline" onclick="exportHTML()" title="브라우저에서 바로 가져올 수 있는 HTML로 내보내기" data-requires-list>🌐 HTML 내보내기</button>
       <button class="btn-outline" onclick="exportJSON()" title="전체 백업 JSON 다운로드" data-requires-list>💾 JSON 백업</button>
-      <button class="btn-outline" onclick="document.getElementById('fileInput').click()" title="JSON 백업 파일 복구" data-requires-list>📂 복구</button>
-      <input type="file" id="fileInput" accept=".json" style="display:none" onchange="importJSON(event)">
+      <button class="btn-outline" onclick="document.getElementById('fileInput').click()" title="JSON 백업 복구 또는 브라우저에서 내보낸 북마크 HTML 가져오기" data-requires-list>📂 가져오기</button>
+      <input type="file" id="fileInput" accept=".json,.html,.htm" style="display:none" onchange="importJSON(event)">
       <button class="btn-primary" onclick="openModal()" data-requires-list>+ 북마크 추가</button>
     </div>
   </header>
@@ -990,6 +990,9 @@
   }
 
   /* ------------ HTML 북마크 내보내기 (표준 규격) ------------ */
+  // 카테고리 없는 북마크를 넣는 폴더. 가져올 때는 카테고리 없음으로 되돌린다 (D-024).
+  const EXPORT_DEFAULT_FOLDER = '기본 북마크';
+
   function exportHTML() {
     const now = Math.floor(Date.now() / 1000);
     
@@ -1006,7 +1009,7 @@
     // 카테고리별로 그룹화
     const groups = {};
     bookmarks.forEach(bm => {
-      const cat = bm.category || '기본 북마크';
+      const cat = bm.category || EXPORT_DEFAULT_FOLDER;
       if (!groups[cat]) groups[cat] = [];
       groups[cat].push(bm);
     });
@@ -1044,13 +1047,25 @@
       `bookmarks_backup_${new Date().toISOString().slice(0, 10)}.json`);
   }
 
+  // [📂 가져오기] 하나로 JSON 백업과 브라우저 북마크 HTML을 모두 받고, 내용으로 형식을 가린다 (D-024).
   function importJSON(event) {
     const file = event.target.files[0];
+    event.target.value = '';
     if (!file) return;
+    // 읽기 전에 거절한다 (폰 메모리 보호).
+    if (file.size > MAX_IMPORT_FILE_BYTES) {
+      alert(`파일이 너무 큽니다. (${MAX_IMPORT_FILE_BYTES / 1024 / 1024}MB 이하)`);
+      return;
+    }
 
     const reader = new FileReader();
     reader.onload = function(e) {
       try {
+        if (isBookmarkHtml(file, e.target.result)) {
+          importBrowserBookmarks(e.target.result);
+          return;
+        }
+
         const imported = JSON.parse(e.target.result);
         if (!Array.isArray(imported)) {
           alert('올바른 JSON 데이터 형식이 아닙니다.');
@@ -1079,7 +1094,6 @@
       }
     };
     reader.readAsText(file);
-    event.target.value = '';
   }
 
   function escapeHtml(text) {
@@ -1087,6 +1101,112 @@
     return text.replace(/[&<>"']/g, function(m) {
       return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[m];
     });
+  }
+
+  /* ------------ 브라우저 북마크 가져오기 ------------ */
+  // 크롬·엣지·파이어폭스와 이 앱의 exportHTML이 쓰는 Netscape 북마크 HTML을 읽는다 (D-024).
+  const MAX_IMPORT_FILE_BYTES = 20 * 1024 * 1024;
+  // 브라우저가 만든 최상위 폴더. 사용자가 고른 분류가 아니므로 카테고리로 쓰지 않는다.
+  const BROWSER_ROOT_FOLDERS = new Set([
+    '북마크바', '북마크 바', '기타 북마크', '모바일 북마크', '북마크 도구 모음', '북마크 메뉴',
+    'Bookmarks bar', 'Bookmarks Bar', 'Other bookmarks', 'Other Bookmarks', 'Mobile bookmarks', 'Bookmarks Toolbar', 'Bookmarks Menu'
+  ]);
+
+  // 파일 이름보다 내용을 먼저 본다. 확장자를 바꾼 파일도 받기 위함.
+  function isBookmarkHtml(file, text) {
+    return /^\s*<!DOCTYPE\s+NETSCAPE-Bookmark-file-1/i.test(text) || /\.html?$/i.test(file.name);
+  }
+
+  // 폴더 = <DT> 안의 <H3> + 바로 뒤의 <DL>. 바깥 폴더부터 담는다.
+  function folderPath(a) {
+    const path = [];
+    for (let dl = a.closest('dl'); dl; dl = dl.parentElement && dl.parentElement.closest('dl')) {
+      const dt = dl.parentElement && dl.parentElement.tagName === 'DT' ? dl.parentElement : null;
+      const h3 = dt ? dt.querySelector(':scope > h3') : null;
+      if (h3) path.unshift(h3);
+    }
+    return path;
+  }
+
+  // 중첩 폴더는 가장 안쪽 폴더 이름만 쓴다 (앱에는 폴더가 없음).
+  function folderCategory(a) {
+    const names = folderPath(a)
+      .filter((h3, i) => !h3.hasAttribute('personal_toolbar_folder') && !h3.hasAttribute('unfiled_bookmarks_folder')
+        && !(i === 0 && BROWSER_ROOT_FOLDERS.has(h3.textContent.trim())))
+      .map(h3 => h3.textContent.trim())
+      .filter(name => name && name !== EXPORT_DEFAULT_FOLDER);
+    return names.length ? names[names.length - 1] : '';
+  }
+
+  // ADD_DATE는 초 단위지만, ms·µs로 적는 도구도 있어 자릿수로 맞춘다.
+  function parseAddDate(value) {
+    const time = Number(value);
+    if (!value || !Number.isFinite(time)) return null;
+    const ms = Math.round(time >= 1e14 ? time / 1000 : time >= 1e11 ? time : time * 1000);
+    return isPlausibleTime(ms) ? ms : null;
+  }
+
+  function hostnameOf(url) {
+    try {
+      return new URL(url).hostname;
+    } catch {
+      return '';
+    }
+  }
+
+  // 같은 주소인지 가리는 키. 호스트 대소문자·기본 포트·호스트만 있는 주소의 끝 '/'만 같게 본다.
+  function urlKey(url) {
+    try {
+      return new URL(url).href;
+    } catch {
+      return url;
+    }
+  }
+
+  // DOMParser로 만든 문서는 화면에 붙지 않아 스크립트가 실행되지 않고 이미지도 받지 않는다.
+  // 값은 textContent·getAttribute로만 꺼내고 normalizeBookmark로 검증한다 (D-014).
+  function parseBrowserBookmarks(text) {
+    const doc = new DOMParser().parseFromString(text, 'text/html');
+    const items = [];
+    let invalid = 0;
+    doc.querySelectorAll('a[href]').forEach(a => {
+      const url = a.getAttribute('href').trim();
+      const item = normalizeBookmark({
+        title: a.textContent.trim() || hostnameOf(url),
+        url,
+        category: folderCategory(a),
+        addedAt: parseAddDate(a.getAttribute('add_date'))
+      });
+      if (item) items.push(item);
+      else invalid++;
+    });
+    return { items, invalid };
+  }
+
+  // 병합만 한다. 지금 목록에 있거나 파일 안에서 앞에 나온 주소는 건너뛴다.
+  function importBrowserBookmarks(text) {
+    const { items, invalid } = parseBrowserBookmarks(text);
+    const seen = new Set(bookmarks.map(bm => urlKey(bm.url)));
+    const fresh = items.filter(bm => {
+      const key = urlKey(bm.url);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    const skipped = [];
+    if (items.length > fresh.length) skipped.push(`이미 있는 주소 ${items.length - fresh.length}개`);
+    if (invalid > 0) skipped.push(`가져올 수 없는 항목 ${invalid}개`);
+
+    if (fresh.length === 0) {
+      alert(skipped.length
+        ? `새로 가져올 북마크가 없습니다.\n(${skipped.join(', ')})`
+        : '가져올 북마크가 없습니다.\n(브라우저에서 내보낸 북마크 HTML 파일인지 확인해 주세요.)');
+      return;
+    }
+    if (!confirm(`북마크 ${fresh.length}개를 가져올까요?` + (skipped.length ? `\n(${skipped.join(', ')}는 건너뜁니다.)` : ''))) return;
+
+    mergeAll(sanitizeBookmarks(fresh, bookmarks));
+    alert(`북마크 ${fresh.length}개를 가져왔습니다.`);
   }
 
   // 초기화 실행
