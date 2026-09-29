@@ -1,6 +1,6 @@
 # 결정 기록 (Decision Record)
 
-- 처음 작성: `eb0ceb2` (v0.2) 기준, 2026-09-29. 마지막 갱신: v0.7 (바뀐 것만 받기), 2026-09-29
+- 처음 작성: `eb0ceb2` (v0.2) 기준, 2026-09-29. 마지막 갱신: v0.8 (배포별 설정 파일), 2026-09-29
 - 이 문서의 결정 배경은 **코드를 읽고 추정한 것**입니다. 작성자가 확인한 항목은 상태를 `확정`으로 바꿔 주세요.
 - 줄 번호(`index.html:NNN`)는 기준 커밋 기준이며, 코드가 바뀌면 함수 이름으로 찾으세요.
 
@@ -12,7 +12,7 @@
 
 | 항목 | 내용 |
 |---|---|
-| 구성 | `index.html` (CSS → HTML → JS 순서, 앱 본체) + `sw.js`(서비스 워커) + `manifest.webmanifest`·`icons/`(설치용) + `firestore.rules`(보안 규칙, 콘솔에 게시) (D-018) |
+| 구성 | `index.html` (CSS → HTML → JS 순서, 앱 본체) + `config.js`(배포별 Firebase 설정, 선택, D-026) + `sw.js`(서비스 워커) + `manifest.webmanifest`·`icons/`(설치용) + `firestore.rules`(보안 규칙, 콘솔에 게시) (D-018) |
 | 실행 | `https://jaydrobin.github.io/jdrbmmanager/` (GitHub Pages, `main` 자동 배포) 또는 브라우저로 `index.html` 열기(로컬 모드만) |
 | 저장소 | 로컬 모드 `localStorage` (브라우저·출처별로 분리됨). 클라우드 모드 Firestore `users/{uid}/bookmarks` + 기기의 IndexedDB 캐시(D-019) + 계정 목록의 `localStorage` 사본(D-025) |
 | 외부 요청 | 파비콘 이미지(Google S2). `http(s)`로 열었을 때 버전 고정한 Firebase SDK(`www.gstatic.com/firebasejs/`)와 그 SDK의 Auth·Firestore 통신 (D-017) |
@@ -42,6 +42,7 @@
 | 다시 열기 (D-019, D-025) | 로그인한 채로 닫았다가 열면 계정 목록의 사본을 바로 보임. 계정이 준비될 때까지 추가·가져오기와 카드의 수정·삭제·이동을 막음(보기·검색·내보내기는 가능). 사본이 없으면 "계정 목록을 불러오는 중…"을 보이고 내보내기도 막음 (K-16) | `loadCloudCopy`, `setCloudLoading`, `showLocalListIfLoading` |
 | 삭제 기록 비우기 (D-025) | 로그인 중 동기화 상태 표시를 누르면 삭제 기록(묘비) 수와 대략의 용량을 보이고, 8일이 지난 기록을 비울지 물음. 오프라인이면 "연결된 뒤에 다시 시도해 주세요." | `cleanTombstones` |
 | 오프라인·설치 (D-022) | 서비스 워커가 앱 파일과 Firebase SDK를 캐시해 오프라인에서도 열림(`https`·`localhost`). 매니페스트·아이콘으로 홈 화면에 추가 가능 | `sw.js`, `manifest.webmanifest` |
+| 배포별 설정 (D-026) | `config.js`의 `window.APP_CONFIG.firebase`로 쓸 Firebase 프로젝트를 정함. 없으면 `index.html`의 기본 설정, `null`이면 로그인 없이 로컬 모드만, 형식이 틀리면 로컬 모드 + 콘솔 경고. 포크한 사람은 이 파일만 고침 | `resolveFirebaseConfig`, `canUseCloud`, `config.js` |
 
 ## 3. 데이터 모델과 저장소
 
@@ -90,7 +91,7 @@
 | `single_file_bookmarks_theme` | `'light'` 또는 `'dark'`. 사용자가 직접 전환했을 때만 저장됨 |
 | `single_file_bookmarks_migrated_<uid>` | 첫 로그인 이전을 물은 시각(ms). 기기·계정마다 한 번만 묻기 위함 |
 | `single_file_bookmarks_cloud_uid` | 로그인 중인 uid. 로그인할 때 쓰고 로그아웃할 때 지움. 다음에 열 때 사본(또는 "불러오는 중")을 보일지 정함 (K-16) |
-| `single_file_bookmarks_cloud_copy_<uid>` | 계정 목록의 사본 `{ version: 1, lastSync, lastFullSync, items: [{ ...북마크 항목, order }] }` (D-025). `lastSync`는 받은 문서의 `updatedAt` 최댓값(ms, 서버 시각), `lastFullSync`는 마지막 전체 받기 시각(ms, 기기 시각). 묘비는 넣지 않음. 로그아웃하거나 로그인이 풀린 채로 열면 지움. 500개 기준 약 150KB |
+| `single_file_bookmarks_cloud_copy_<uid>` | 계정 목록의 사본 `{ version: 1, lastSync, lastFullSync, items: [{ ...북마크 항목, order }] }` (D-025). `lastSync`는 받은 문서의 `updatedAt` 최댓값(ms, 서버 시각), `lastFullSync`는 마지막 전체 받기 시각(ms, 기기 시각). 묘비는 넣지 않음. 로그아웃하거나 로그인이 풀린 채로 열면 지움. 클라우드를 끈 설정으로 열어도 지움(D-026). 500개 기준 약 150KB |
 | `firestore_*` | Firestore SDK가 여러 탭 조율에 쓰는 키 (앱이 직접 쓰지 않음) |
 
 - IndexedDB에는 Firebase Auth의 로그인 상태(`firebaseLocalStorageDb`)와 Firestore 캐시가 있습니다. Firestore 캐시는 로그아웃할 때 지웁니다 (D-019).
@@ -215,7 +216,7 @@
 - **날짜:** 2026-09-29
 - **맥락:** 오프라인에서 앱을 열려면 서비스 워커가 필요한데 서비스 워커는 별도 파일이어야 함. Firebase SDK도 외부 코드. 그래도 빌드 없이 파일만 올리면 되는 구성은 유지하고 싶음.
 - **결정:**
-  - 파일: `index.html`(앱 본체, 지금처럼 한 파일), `sw.js`(D-022), `manifest.webmanifest`·`icons/`(설치), `firestore.rules`(D-021). 빌드 도구·패키지 매니저는 쓰지 않는다. 호스팅 전용 설정 파일(`firebase.json` 등)은 두지 않는다 (D-023).
+  - 파일: `index.html`(앱 본체, 지금처럼 한 파일), `config.js`(배포별 Firebase 설정, 없어도 동작, v0.8~ D-026), `sw.js`(D-022), `manifest.webmanifest`·`icons/`(설치), `firestore.rules`(D-021). 빌드 도구·패키지 매니저는 쓰지 않는다. 호스팅 전용 설정 파일(`firebase.json` 등)은 두지 않는다 (D-023).
   - Firebase SDK는 공식 CDN `https://www.gstatic.com/firebasejs/12.19.0/`의 `firebase-app.js`·`firebase-auth.js`·`firebase-firestore.js`를 **버전 고정**해 쓴다. 버전은 `index.html`의 `FIREBASE_SDK_URL`과 `sw.js`의 `SDK_BASE` 두 곳에 있다.
   - 스크립트를 `<script type="module">`로 바꾸지 **않고**, 일반 스크립트에서 동적 `import()`로 SDK를 불러온다. 모듈 스크립트는 함수가 전역이 아니라 인라인 `onclick`(D-012)이 깨지고, 정적 `import`는 SDK를 못 받으면 스크립트 전체가 멈추기 때문. 불러오지 못하거나 10초가 넘으면 로컬 모드로 동작한다.
   - 외부 요청 허용 목록: 파비콘(D-008), `www.gstatic.com/firebasejs/`, Firebase SDK가 스스로 하는 Auth·Firestore 통신. 이 밖의 요청은 추가하지 않는다.
@@ -226,7 +227,7 @@
 - **날짜:** 2026-09-29
 - **맥락:** 로그인하지 않거나 Firebase를 쓸 수 없어도 지금처럼 써야 하고, 로그인 전후의 데이터가 섞이면 안 됨.
 - **결정:**
-  - 로컬 모드: 로그인 안 함, `file://`, SDK 로드 실패. 원본은 `localStorage`(`single_file_bookmarks_v3`), 동기화 없음. 클라우드 모드: 로그인함. 원본은 Firestore, 기기에는 SDK의 IndexedDB 캐시와 계정 목록의 `localStorage` 사본(D-025).
+  - 로컬 모드: 로그인 안 함, `file://`, SDK 로드 실패, 설정으로 클라우드를 끔(`config.js`의 `firebase: null`이나 형식 오류, D-026). 원본은 `localStorage`(`single_file_bookmarks_v3`), 동기화 없음. 클라우드 모드: 로그인함. 원본은 Firestore, 기기에는 SDK의 IndexedDB 캐시와 계정 목록의 `localStorage` 사본(D-025).
   - 두 모드는 목록을 따로 쓴다. 로그인 중에는 로컬 목록을 건드리지 않고, **로그아웃하면 로그인 전 로컬 목록**으로 돌아간다. 로그아웃할 때 클라우드 캐시와 사본을 지우고(`terminate` → `clearIndexedDbPersistence`), 아직 올라가지 않은 쓰기가 있으면(`waitForPendingWrites`가 3초 안에 안 끝남) 먼저 묻는다. 로그인한 채로 닫았는데 다음에 열 때 로그인이 풀려 있어도(만료 등) 사본을 지운다. Firestore 인스턴스는 로그인할 때 만들고 로그아웃할 때 없앤다.
   - **첫 로그인 이전:** 기기·계정마다 한 번(`single_file_bookmarks_migrated_<uid>`), 서버에서 받은 첫 스냅샷 뒤에 묻는다. 로컬에 사용자 데이터가 있으면 클라우드가 비었을 때 "계정에 올릴까요?", 있을 때 "계정 목록에 합칠까요?" → 확인하면 `mergeAll`(ID 충돌은 D-014대로 새로 발급). 로컬이 비었거나 시드만(ID 1·2·3, 제목·URL 같음) 있으면 묻지 않는다. 로컬 데이터는 지우지 않는다. 여러 탭이 함께 묻지 않도록 묻기 전에 키를 기록한다.
   - **다시 열 때 (K-16, v0.7에서 바뀜):** 로그인 중인 uid를 `single_file_bookmarks_cloud_uid`에 두고, 다음에 열 때 있으면 로컬 목록 대신 그 계정 목록의 사본(D-025)을 바로 보인다. 계정이 준비될 때까지(로그인 확인 → 필요하면 전체 받기 → 바뀐 것 구독 시작) 목록을 바꾸는 조작(추가·가져오기 버튼, 카드의 수정·삭제·이동·드래그)을 막고, 보기·검색·내보내기는 허용한다. 사본이 없으면(새 기기, 로그인 직후, 사본 손상) "계정 목록을 불러오는 중…"을 보이며 내보내기도 막는다. SDK 로드 실패나 로그인이 풀려 있으면 로컬 목록을 보인다. 버튼은 `data-requires-account`(준비될 때까지 막음)와 `data-requires-list`(보이는 목록이 없을 때만 막음)로 구분한다.
@@ -254,7 +255,7 @@
   - 어느 호스팅에서든 `signInWithPopup`이 기본. 요즘 브라우저는 다른 사이트의 저장소 접근을 막아, 앱 주소와 `authDomain`이 다르면 리디렉트 로그인이 실패할 수 있다(Firebase 문서). 그래서 리디렉트는 앱 주소가 `authDomain`과 같을 때만(= Firebase Hosting의 `firebaseapp.com`으로 옮겼을 때) 팝업이 막혔을 때의 대체로 쓴다. 그 밖에 팝업이 막히면 "팝업을 허용해 주세요" 알림.
   - 앱 주소는 Firebase 콘솔의 승인된 도메인에 있어야 한다(`jaydrobin.github.io`, `localhost`).
   - Firestore 보안 규칙(`firestore.rules`)에서 **허용 목록의 UID만** 자기 경로(`users/{uid}/bookmarks`)를 읽고 쓰게 한다. 쓰기는 북마크(`isValidBookmark`: 필드 목록·타입·길이(제목 500, URL 2048·`http(s)`, 카테고리 100)·`updatedAt == request.time`) 또는 묘비(`isTombstone`: `deleted: true`와 `updatedAt == request.time`만, v0.7~, D-025)만 허용한다. `delete`는 묘비 비우기와 v0.6 이하 앱의 삭제에 쓴다. 앱의 검증(D-014)과 같은 조건을 유지한다. 규칙은 저장소에 두고 콘솔에 붙여넣어 게시하며, 규칙이 필요한 앱 변경은 **규칙을 먼저 게시한 뒤** 배포한다.
-  - Firebase 설정값(`apiKey` 등)과 허용 UID는 공개돼도 되는 값이라 `index.html`의 `FIREBASE_CONFIG`와 `firestore.rules`에 그대로 둔다. 비밀 값(서비스 계정 키 등)은 저장소에 넣지 않는다.
+  - Firebase 설정값(`apiKey` 등)과 허용 UID는 공개돼도 되는 값이라 그대로 둔다. 설정값의 기본은 `index.html`의 `DEFAULT_FIREBASE_CONFIG`, 배포별 값은 `config.js`(v0.8~, D-026), 허용 UID는 `firestore.rules`. 비밀 값(서비스 계정 키 등)은 저장소에 넣지 않는다.
   - 허용 계정은 1개. 계정마다 목록이 따로이므로 모든 기기에서 같은 계정으로 로그인한다. UID를 규칙에 추가하면 다른 계정도 자기 목록을 쓸 수 있다(무료 한도는 함께 씀).
 - **결과:** 다른 계정은 로그인해도 "접근할 수 없습니다" 알림 후 로그아웃되고, 남이 무료 한도를 쓰지 못함. 로그인 상태는 Auth SDK가 IndexedDB에 두므로 오프라인에서도 로그인된 채 캐시를 씀. 대신 팝업이나 로그인 중의 주소를 가로채는 환경에서는 브라우저 설정을 바꿔야 로그인되고(K-17), 허용 계정을 늘리려면 규칙을 다시 게시해야 함. 팝업 로그인 중 콘솔에 `Cross-Origin-Opener-Policy` 경고가 찍히지만 로그인에는 영향이 없음.
 
@@ -263,9 +264,10 @@
 - **날짜:** 2026-09-29
 - **맥락:** 네트워크 없이도 앱을 열어야 하고(Firestore는 데이터만 오프라인 처리), 폰에서 앱처럼 쓰고 싶음.
 - **결정:**
-  - `sw.js`를 `./sw.js`로 등록해 **앱 폴더 범위**만 다룬다. `https`와 `localhost`에서만 동작.
-  - 설치 때 앱 셸(`./`, `./index.html`, 매니페스트, 아이콘)과 SDK 세 파일을 캐시(`CACHE_NAME`, 현재 `jdrbm-v0.7`). 릴리스마다 이름을 올리고, 이전 캐시는 `activate`에서 지운다.
-  - 요청별 전략: 앱 본체·매니페스트는 **네트워크 우선**(새 버전을 바로 받기 위해. 4초 안에 응답이 없으면 캐시로 열고, 늦게 온 응답으로 캐시만 갱신), SDK·아이콘은 캐시 우선(버전이 URL에 있어 바뀌지 않음), Firestore·Auth 통신과 파비콘은 가로채지 않음(SDK가 오프라인을 직접 처리).
+  - `sw.js`를 `./sw.js`로 등록해 **앱 폴더 범위**만 다룬다. `https`와 `localhost`에서만 동작. 설정으로 클라우드를 꺼도 등록한다(`isServedOverHttp`, D-026).
+  - 설치 때 앱 셸(`./`, `./index.html`, 매니페스트, 아이콘)과 SDK 세 파일을 캐시(`CACHE_NAME`, 현재 `jdrbm-v0.8`). 릴리스마다 이름을 올리고, 이전 캐시는 `activate`에서 지운다.
+  - 없어도 되는 파일(`OPTIONAL_FILES`, 지금은 `config.js`, D-026)은 앱 셸과 따로 하나씩 캐시하고 실패를 무시한다. `cache.addAll`은 파일 하나만 없어도 설치 전체가 실패하기 때문이다.
+  - 요청별 전략: 앱 본체·매니페스트·`config.js`는 **네트워크 우선**(새 버전을 바로 받기 위해. 4초 안에 응답이 없으면 캐시로 열고, 늦게 온 응답으로 캐시만 갱신), SDK·아이콘은 캐시 우선(버전이 URL에 있어 바뀌지 않음), Firestore·Auth 통신과 파비콘은 가로채지 않음(SDK가 오프라인을 직접 처리).
   - `manifest.webmanifest`: `start_url`·`scope`는 `./`, `display: standalone`, 아이콘 192·512(가운데 안전 영역에 그려 `any`·`maskable` 겸용).
   - 로그인 중 헤더에 동기화 상태: `✓ 동기화됨` / `… 연결 중`(온라인인데 스냅샷이 캐시에서 옴) / `⬆ 올릴 변경 있음`(`waitForPendingWrites`가 1초 넘게 안 끝남) / `⚠ 오프라인`(`navigator.onLine`이 false, 빨간색). "연결 중"은 앱을 열 때마다 잠깐 "오프라인"으로 보이지 않게 하려고 둔다. v0.7부터 이 표시는 `<button>`이고, 누르면 삭제 기록 비우기(D-025).
 - **결과:** 비행기 모드에서도 홈 화면 아이콘으로 열어 조회·수정할 수 있고, 연결되면 올라감(안드로이드 크롬에서 확인). 대신 오프라인 셸은 앱을 한 번 온라인으로 연 뒤부터 동작하고, 배포 직후 이전 캐시가 한 번 보일 수 있으며(다시 열면 새 버전), 릴리스 때 `CACHE_NAME`을 올려야 함.
@@ -327,14 +329,30 @@
   - 묘비가 쌓인다(저장 공간만, 사용자가 비움). 가장 최근에 바뀐 살아 있는 북마크보다 뒤에 생긴 묘비는 전체 받기 뒤 구독에서 한 번 더 읽히고, 빈 계정이면 묘비 전체를 한 번 읽는다(전체 받기 때만).
   - 사본·SDK 캐시·서버 세 곳의 일관성을 코드로 지킨다. 앱을 닫은 뒤 다음 세션에서 거부된 오프라인 쓰기, v0.6 이하 앱·콘솔에서 직접 지운 문서는 다음 전체 받기(최대 7일)까지 사본에 남는다.
   - 전체 쓰기(`setDoc`: 복구 병합, 가져오기)는 묘비를 덮어써 북마크를 되살릴 수 있다. 복구는 사용자가 원한 것이므로 수용(K-19와 같음).
-
-### D-026. 배포별 Firebase 설정 파일(`config.js`)
-- **상태:** 확정 (2026-09-29, 구현은 [CONFIG-FILE-DESIGN.md](CONFIG-FILE-DESIGN.md) 7장 1단계, v0.8)
-- **맥락:** Firebase 설정값이 `index.html`의 `FIREBASE_CONFIG`에 들어 있어, 다른 사람이 자기 Firebase 프로젝트로 쓰려면 앱 코드를 고쳐야 한다. 한편 `index.html` 하나로도 지금처럼 동작해야 한다.
-- **결정:** 앱 스크립트 앞에서 같은 폴더의 `config.js`를 일반 스크립트로 불러와 `window.APP_CONFIG.firebase`를 읽는다. 없으면 `index.html`의 기본 설정(`DEFAULT_FIREBASE_CONFIG`), `null`이면 클라우드 끔(로컬 모드만), 형식이 틀리면 클라우드 끔 + 콘솔 경고. 저장소에는 주석뿐인 템플릿을 커밋한다. 서비스 워커는 `config.js`를 `APP_SHELL`과 따로(없어도 설치 실패 없이) 캐시하고 네트워크 우선으로 읽는다. 클라우드를 끈 채 열면 남은 계정 목록 사본을 지운다.
-- **결과(예상, 구현 후 갱신):** 포크한 사람은 `config.js`만 고치면 되고, 지금 배포는 그대로다. 대신 `config.js`에서 `index.html`과 같은 이름을 선언하면 앱이 멈추고, 문법 오류가 있으면 조용히 기본 설정으로 동작한다(기본 프로젝트의 승인된 도메인·보안 규칙이 막으므로 데이터 노출은 없음).
   - v0.6 이하 앱이 섞여 있으면: 새 앱의 삭제는 v0.6에서 사라져 보이지만(묘비는 `order`가 없음), v0.6의 삭제(`deleteDoc`)는 새 앱에서 다음 전체 받기까지 남고, v0.6이 묘비에 수정을 보내면 거부돼 알림이 뜬다. 모든 기기가 새 버전으로 바뀌면 사라지는 과도기 문제.
   - 사본은 같은 출처의 다른 페이지에 IndexedDB 캐시와 같은 수준으로 노출된다(K-20). 로그아웃 때 지운다.
+
+### D-026. 배포별 Firebase 설정 파일(`config.js`)
+- **상태:** 확정 (v0.8에서 구현. PC 크롬 `localhost`·`file://`(headless 크롬), GitHub Pages에서 PC·안드로이드 크롬으로 확인)
+- **날짜:** 2026-09-29
+- **맥락:** Firebase 설정값이 `index.html`의 `FIREBASE_CONFIG`에 들어 있어, 다른 사람이 자기 Firebase 프로젝트로 쓰려면 앱 코드를 고쳐야 했다. 한편 `index.html` 하나로도 지금처럼 동작해야 하고, 지금 배포(주소·데이터·로그인 상태)는 바뀌면 안 된다.
+  - 하지 않은 것: 앱 화면에서 설정값 입력받기(기기마다 따로 저장돼 여러 기기에서 맞춰야 하고, 잘못 넣으면 되돌리는 화면까지 필요), 허용 UID를 `config.js`로 옮기기(서버의 보안 규칙이 검사하므로 앱 파일로 옮길 수 없음. 포크한 사람은 자기 콘솔에 규칙을 게시), SDK 버전(`FIREBASE_SDK_URL`)·길이 제한(`MAX_*_LENGTH`)을 설정으로 빼기(각각 `sw.js`·`firestore.rules`와 함께 바뀌어야 하는 값). 저장 형식은 바꾸지 않았다.
+- **결정:**
+  - **형식:** `config.js`에서 `window.APP_CONFIG = { firebase: { apiKey, authDomain, projectId, storageBucket, messagingSenderId, appId } }`로 **대입**한다. `firebase: null`이면 클라우드를 끈다. 저장소에는 주석뿐인 템플릿을 커밋한다: 파일이 늘 있어 지금 배포에서 404가 생기지 않고, 포크한 사람은 이 파일만 고친다. Firebase 콘솔의 코드를 통째로 붙이면 `import` 줄이 일반 스크립트에서 문법 오류이므로, 객체 안의 값만 옮기라고 템플릿과 README에 적는다.
+  - **불러오기:** 앱 스크립트 바로 앞에서 `<script src="config.js">`(`defer`·`async`·`type="module"` 없음)로 불러온다. 앱 스크립트보다 먼저 실행되고, 파일이 없거나 오류가 나도 앱 스크립트는 그대로 실행된다. 같은 출처의 상대 경로라 새 외부 요청이 아니다(D-018, D-023).
+  - **쓸 설정 정하기(`resolveFirebaseConfig`):**
+    - `window.APP_CONFIG`가 없음(파일 없음, 템플릿 그대로, 문법 오류) 또는 `firebase` 키가 없음 → `index.html`의 **기본 설정** `DEFAULT_FIREBASE_CONFIG`
+    - `firebase: null` → **클라우드 끔**
+    - `firebase`가 객체이고 `FIREBASE_REQUIRED_KEYS`(`apiKey`, `authDomain`, `projectId`, `appId`)가 모두 비어 있지 않은 문자열 → **그 설정**(얕은 복사. 두 프로젝트의 값이 섞이면 의미가 없으므로 기본값과 필드별로 합치지 않음)
+    - 그 밖(객체가 아님, 필수 값 누락·빈 문자열, `firebase`가 문자열 등)과 `const`·`let APP_CONFIG`로 **선언**한 경우 → **클라우드 끔 + `console.warn`**. 다른 프로젝트를 쓰려던 배포가 조용히 기본 프로젝트에 붙지 않게 한다. 선언한 경우는 `window`의 속성이 되지 않아 콘솔에 아무것도 남지 않고 기본 설정이 되는 것을 구현 중에 확인해 추가했다(`isAppConfigDeclared`, 선언 도중 예외가 나 초기화되지 않은 이름도 앱을 멈추지 않음).
+    - `config.js`는 배포한 사람이 직접 두는 코드라(불러오는 순간 실행됨) D-014처럼 데이터로 검증하지 않고, 형식만 확인해 설정 실수로 앱이 멈추지 않게 한다.
+  - **클라우드 사용 여부:** `canUseCloud()` = `http(s)`로 열었고(`isServedOverHttp()`) 설정이 있음. 서비스 워커 등록은 `isServedOverHttp()`만 본다(클라우드를 꺼도 오프라인 셸은 필요).
+  - **클라우드를 끈 채 열면** 로그인한 채로 닫았다는 표시(`single_file_bookmarks_cloud_uid`)와 그 계정의 사본을 지운다(`forgetCloudCopy`, 로그인이 풀린 채로 열었을 때와 같은 처리). 이때는 `handleAuthChange`가 실행되지 않아 사본이 영영 남기 때문이다. 사본은 올릴 변경의 대기열이 아니라 잃는 데이터가 없다. Firestore IndexedDB 캐시와 Auth 로그인 상태는 SDK 없이 지울 수 없어 남고, 설정을 다시 켜고 로그인하면 이어서 쓰이며 로그아웃할 때 지워진다.
+  - **다른 프로젝트로 바꾸면** 이전 프로젝트의 uid가 표시 키에 남아, SDK를 불러오는 동안 이전 계정의 사본이 잠긴 채 잠깐 보인 뒤 `handleAuthChange(null)`이 사본을 지우고 로컬 목록으로 돌아간다. 설정을 바꿀 때 한 번뿐이라 따로 처리하지 않는다. Auth·Firestore의 IndexedDB는 프로젝트별로 따로라 섞이지 않는다.
+  - **서비스 워커:** `config.js`는 없는 배포도 있으므로 `APP_SHELL`에 넣지 않고 `OPTIONAL_FILES`로 따로 캐시하며(D-022), 앱 본체처럼 네트워크 우선으로 읽는다. 설정을 바꾸면 다음에 열 때 반영되고, 오프라인에서는 캐시한 설정으로 열린다.
+- **결과:** 포크한 사람은 `config.js`만 고치면 자기 Firebase 프로젝트로 쓸 수 있고(절차는 README), 지금 배포는 사용자가 할 일 없이 그대로다. 확인한 사실: `file://`에서도 같은 폴더의 `config.js`가 실행된다(어느 쪽이든 로컬 모드). `config.js`가 없으면 콘솔에 404 한 줄만 남고 기본 설정으로 동작하며 서비스 워커도 설치된다. 서버를 멈추면 캐시한 `config.js`로 열리고, 다시 켜고 바꾸면 새 값이 쓰인다. 대신:
+  - `config.js`에서 `index.html`과 같은 최상위 이름(예: `const DEFAULT_FIREBASE_CONFIG`)을 선언하면 앱 스크립트 전체가 `Identifier … has already been declared`로 멈춘다. 템플릿 주석과 README로 경고한다. `index.html`은 `APP_CONFIG`라는 최상위 이름을 선언하지 않는다.
+  - 문법 오류가 있으면 조용히 기본 설정으로 동작한다(K-22). `index.html`만 복사하면 `config.js` 404가 남는다(K-21).
 
 ## 5. 알려진 문제와 기술 부채
 
@@ -362,6 +380,8 @@
 | K-18 | 낮음 | (v0.6까지) Firestore 무료 읽기 한도(50,000/일): 앱을 열 때마다 북마크 수만큼 읽을 수 있어 `북마크 수 × 하루에 여는 횟수`가 대략의 최대치. 500개·하루 60번이면 약 30,000. 넘으면 그날 서버 요청이 거부됨(과금 없음, 캐시로 계속 보이고 쓰기는 대기) | D-017 | 해결 (3d63cbb, D-025 바뀐 것만 받기) |
 | K-19 | 낮음 | 같은 북마크를 두 기기에서(특히 오프라인으로) 고치면 나중에 동기화된 쪽만 남음. 한 기기에서 JSON 덮어쓰기 복구 중 다른 기기의 늦은 오프라인 쓰기가 도착하면 그 항목이 되살아날 수 있음 | D-020 | 수용 (설계상) |
 | K-20 | 낮음 | GitHub Pages에서는 `jaydrobin.github.io`의 다른 저장소 페이지가 같은 출처라, 그 페이지의 스크립트가 이 앱의 로그인 정보·북마크를 읽을 수 있음 | D-023 | 수용. 다른 페이지에 신뢰할 수 없는 외부 스크립트를 넣지 않음. 필요해지면 다른 출처로 옮김 |
+| K-21 | 낮음 | `config.js` 없이 `index.html`만 배포하면 열 때마다 콘솔에 `config.js` 404 오류가 한 줄 남음 | D-026 | 수용. 동작에는 영향 없음(기본 설정). 저장소에는 템플릿이 늘 있어 지금 배포에서는 생기지 않음 |
+| K-22 | 낮음 | `config.js`에 문법 오류가 있으면 `window.APP_CONFIG`가 없는 것과 구별할 수 없어, 콘솔의 문법 오류 말고는 알림 없이 기본 Firebase 프로젝트로 동작함 | D-026 | 수용. 포크한 주소는 기본 프로젝트의 승인된 도메인이 아니라 로그인이 막히고, 로그인하더라도 보안 규칙의 허용 UID가 아니라 거부되므로 데이터 노출·한도 사용 없음. 공개된 설정값으로도 같은 일을 할 수 있어 새 위험은 아님 |
 
 ## 6. 새 결정 추가 방법
 
