@@ -56,7 +56,9 @@
     h1 { font-size: 1.5rem; display: flex; align-items: center; gap: 8px; font-weight: 700; }
     .btn-group { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
     .account-label { font-size: 0.8rem; color: var(--text-muted); max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .sync-status { font-size: 0.8rem; color: var(--text-muted); white-space: nowrap; }
+    /* 누르면 삭제 기록 비우기 (D-025). 버튼이지만 글자처럼 보이게 한다 */
+    button.sync-status { font-size: 0.8rem; color: var(--text-muted); white-space: nowrap; background: none; padding: 4px 6px; }
+    button.sync-status:hover:not(:disabled) { background: var(--border); }
     .sync-status.is-offline { color: var(--danger); }
     button:disabled { opacity: 0.5; cursor: not-allowed; }
     /* button의 display 지정이 hidden 속성을 덮지 않도록 */
@@ -92,6 +94,7 @@
       user-select: none;
     }
     .card:active { cursor: grabbing; }
+    .card[draggable="false"] { cursor: default; }
 
     /* Drag & Drop Visual State */
     .card.dragging { opacity: 0.35; transform: scale(0.98); }
@@ -130,17 +133,17 @@
   <header>
     <h1>🔖 북마크 매니저</h1>
     <div class="btn-group">
-      <span id="syncStatus" class="sync-status" hidden></span>
+      <button type="button" id="syncStatus" class="sync-status" onclick="cleanTombstones()" hidden></button>
       <span id="accountLabel" class="account-label" hidden></span>
       <!-- Firebase를 불러온 뒤에만 보인다 (로컬 모드에서는 숨김) -->
       <button class="btn-outline" id="authBtn" onclick="toggleAuth()" hidden>🔑 로그인</button>
       <button class="btn-outline btn-icon" id="themeToggleBtn" onclick="toggleTheme()" title="테마 전환">🌙</button>
-      <!-- data-requires-list: 계정 목록을 불러오는 동안 비활성화 (K-16) -->
+      <!-- 계정이 준비되기 전에는 비활성화 (K-16, D-025). data-requires-list: 보이는 목록이 없을 때만, data-requires-account: 목록을 바꾸므로 준비될 때까지 -->
       <button class="btn-outline" onclick="exportHTML()" title="브라우저에서 바로 가져올 수 있는 HTML로 내보내기" data-requires-list>🌐 HTML 내보내기</button>
       <button class="btn-outline" onclick="exportJSON()" title="전체 백업 JSON 다운로드" data-requires-list>💾 JSON 백업</button>
-      <button class="btn-outline" onclick="document.getElementById('fileInput').click()" title="JSON 백업 복구 또는 브라우저에서 내보낸 북마크 HTML 가져오기" data-requires-list>📂 가져오기</button>
+      <button class="btn-outline" onclick="document.getElementById('fileInput').click()" title="JSON 백업 복구 또는 브라우저에서 내보낸 북마크 HTML 가져오기" data-requires-account>📂 가져오기</button>
       <input type="file" id="fileInput" accept=".json,.html,.htm" style="display:none" onchange="importJSON(event)">
-      <button class="btn-primary" onclick="openModal()" data-requires-list>+ 북마크 추가</button>
+      <button class="btn-primary" onclick="openModal()" data-requires-account>+ 북마크 추가</button>
     </div>
   </header>
 
@@ -190,6 +193,8 @@
   const MAX_CATEGORY_LENGTH = 100;
   const MIGRATED_KEY_PREFIX = 'single_file_bookmarks_migrated_'; // + uid. 첫 로그인 이전을 물었는지
   const CLOUD_HINT_KEY = 'single_file_bookmarks_cloud_uid'; // 로그인한 채로 닫았는지 (K-16)
+  const CLOUD_COPY_KEY_PREFIX = 'single_file_bookmarks_cloud_copy_'; // + uid. 계정 목록의 사본 (D-025)
+  const CLOUD_COPY_VERSION = 1;
 
   // 공개돼도 되는 값이다(비밀 키 아님). 데이터는 보안 규칙과 승인된 도메인으로 보호한다.
   const FIREBASE_CONFIG = {
@@ -209,10 +214,12 @@
     { id: 3, title: 'YouTube', url: 'https://www.youtube.com', category: '미디어', addedAt: null }
   ];
 
-  // 로그인한 채로 닫았으면 Firebase를 불러오는 동안 로컬 목록 대신 "불러오는 중"을 보인다.
+  // 로그인한 채로 닫았으면 Firebase를 불러오는 동안 로컬 목록 대신 계정 목록의 사본을 보인다(없으면 "불러오는 중").
   // 그 사이에 로컬 목록을 보고 고치면 계정이 아닌 로컬 목록에 저장되기 때문이다 (K-16).
+  // 계정이 준비될 때까지 목록을 바꾸는 조작은 막는다 (D-025).
   let cloudLoading = canUseCloud() && localStorage.getItem(CLOUD_HINT_KEY) !== null;
-  let bookmarks = cloudLoading ? [] : loadBookmarks();
+  const bootCopy = cloudLoading ? loadCloudCopy(localStorage.getItem(CLOUD_HINT_KEY)) : null;
+  let bookmarks = cloudLoading ? (bootCopy ? bootCopy.items : []) : loadBookmarks();
   let store = createLocalStore();
 
   /* ------------- 데이터 검증 및 불러오기 ------------- */
@@ -317,6 +324,28 @@
     return copyDefaultBookmarks();
   }
 
+  // 계정 목록의 사본 { version, lastSync, lastFullSync, items: [{ ...북마크, order }] } (D-025).
+  // 사본도 외부 입력이다. 한 항목이라도 잘못됐으면 사본 전체를 버려 서버에서 전체를 다시 받게 한다
+  // (항목만 버리면 그 북마크가 다음 전체 동기화까지 빠진 채로 남는다).
+  function loadCloudCopy(uid) {
+    try {
+      const copy = JSON.parse(localStorage.getItem(CLOUD_COPY_KEY_PREFIX + uid));
+      if (!copy || copy.version !== CLOUD_COPY_VERSION || !Array.isArray(copy.items)
+        || !Number.isFinite(copy.lastSync) || !Number.isFinite(copy.lastFullSync)) return null;
+      const orders = new Map();
+      const items = [];
+      for (const raw of copy.items) {
+        const bm = normalizeBookmark(raw);
+        if (!bm || bm.id === null || orders.has(bm.id) || !Number.isFinite(raw.order)) return null;
+        orders.set(bm.id, raw.order);
+        items.push(bm);
+      }
+      return { lastSync: copy.lastSync, lastFullSync: copy.lastFullSync, items, orders };
+    } catch {
+      return null;
+    }
+  }
+
   /* ------------- 저장소 및 상태 작업 ------------- */
   // store 메서드는 작업 함수가 메모리 배열을 바꾼 뒤에 호출된다:
   // add(item), update(id, fields), remove(id), move(id, toIndex), replaceAll(list), mergeAll(list)
@@ -378,20 +407,42 @@
   const ORDER_GAP = 1024;
   const MIN_ORDER_GAP = 1e-6;
   const MAX_BATCH_WRITES = 500;
+  const DAY_MS = 86400000;
+  // 바뀐 것만 받으면 문서가 직접 지워진 경우(v0.6 이하 앱, 콘솔)를 놓치므로 이 주기로 전체를 다시 받는다 (D-025).
+  const FULL_SYNC_INTERVAL_DAYS = 7;
+  // 이보다 오래된 묘비만 비운다. 전체 동기화 주기 + 1일이면 어느 기기도 삭제를 놓치지 않는다 (주기를 바꾸면 함께 바꾼다).
+  const TOMBSTONE_KEEP_DAYS = FULL_SYNC_INTERVAL_DAYS + 1;
+  const TOMBSTONE_BYTES = 150; // 묘비 1개의 대략적인 저장 공간 (색인 포함 추정)
 
   let firebase = null; // { app, auth, authApi, fs }
-  let cloud = null;    // 로그인 중일 때 { uid, db, unsubscribe, migrationChecked }
+  let cloud = null;    // 로그인 중일 때 { uid, db, unsubscribe, migrationChecked, ... }
   let lastWriteErrorAt = 0;
   // 연결이 불안정해 SDK가 끝없이 받아지는 동안 "불러오는 중"에 갇히지 않도록
   const SDK_LOAD_TIMEOUT_MS = 10000;
+  const SERVER_FETCH_TIMEOUT_MS = 10000;
 
   function canUseCloud() {
     return location.protocol === 'http:' || location.protocol === 'https:';
   }
 
-  function setCloudLoading(on) {
+  // hasList: 계정 목록(사본)이 보이고 있으면 내보내기는 허용한다.
+  function setCloudLoading(on, hasList = false) {
     cloudLoading = on;
-    document.querySelectorAll('[data-requires-list]').forEach(button => { button.disabled = on; });
+    document.querySelectorAll('[data-requires-account]').forEach(button => { button.disabled = on; });
+    document.querySelectorAll('[data-requires-list]').forEach(button => { button.disabled = on && !hasList; });
+  }
+
+  function withTimeout(promise, ms) {
+    return Promise.race([promise, new Promise((resolve, reject) =>
+      setTimeout(() => reject(Object.assign(new Error('timeout'), { code: 'timeout' })), ms))]);
+  }
+
+  // 올릴 쓰기가 ms 안에 모두 서버에 올라갔는지. 오프라인이면 끝나지 않으므로 시간을 제한한다.
+  function waitForSync(db, ms) {
+    return Promise.race([
+      firebase.fs.waitForPendingWrites(db).then(() => true, () => true),
+      new Promise(resolve => setTimeout(() => resolve(false), ms))
+    ]);
   }
 
   // 계정 목록을 기다리다 포기할 때(SDK 실패, 로그인 풀림) 로컬 목록을 보인다.
@@ -427,7 +478,9 @@
     if (cloud && (!user || user.uid !== cloud.uid)) leaveCloudMode();
     if (user && !cloud) enterCloudMode(user);
     if (!user) {
-      // 로그인한 채로 닫았지만 로그인이 풀려 있는 경우(만료 등)
+      // 로그인한 채로 닫았지만 로그인이 풀려 있는 경우(만료 등). 로그아웃과 같이 사본도 지운다 (D-025).
+      const hintUid = localStorage.getItem(CLOUD_HINT_KEY);
+      if (hintUid) localStorage.removeItem(CLOUD_COPY_KEY_PREFIX + hintUid);
       localStorage.removeItem(CLOUD_HINT_KEY);
       showLocalListIfLoading();
     }
@@ -453,6 +506,7 @@
       status.textContent = '✓ 동기화됨';
       status.title = '모든 변경이 서버에 저장됐습니다';
     }
+    status.title += '\n눌러서 삭제 기록 관리';
   }
 
   // 아직 서버에 올라가지 않은 쓰기가 있는지 본다. 오프라인에서 다시 연 경우처럼 이전 세션의 쓰기도 포함된다.
@@ -513,10 +567,7 @@
   async function logout() {
     const button = document.getElementById('authBtn');
     button.disabled = true;
-    const synced = await Promise.race([
-      firebase.fs.waitForPendingWrites(cloud.db).then(() => true, () => true),
-      new Promise(resolve => setTimeout(() => resolve(false), 3000))
-    ]);
+    const synced = await waitForSync(cloud.db, 3000);
     button.disabled = false;
     if (!synced && !confirm('아직 서버에 올라가지 않은 변경이 있습니다 (오프라인일 수 있음).\n로그아웃하면 이 변경은 사라집니다. 계속할까요?')) return;
     firebase.authApi.signOut(firebase.auth);
@@ -528,50 +579,118 @@
     const db = fs.initializeFirestore(firebase.app, {
       localCache: fs.persistentLocalCache({ tabManager: fs.persistentMultipleTabManager() })
     });
+    const copy = loadCloudCopy(user.uid);
     const session = {
       uid: user.uid, db, unsubscribe: null, migrationChecked: false,
       fromCache: true, pending: false, pendingGeneration: 0
     };
-    const cloudStore = createCloudStore(db, user.uid);
+    const cloudStore = createCloudStore(db, user.uid, copy);
     cloud = session;
     store = cloudStore;
     localStorage.setItem(CLOUD_HINT_KEY, user.uid);
-    // 첫 스냅샷 전에 로컬 목록을 조작해 클라우드에 쓰지 않도록 비우고 "불러오는 중"을 보인다.
-    setCloudLoading(true);
-    bookmarks = [];
+    // 준비되기 전에 목록을 바꿔 클라우드에 쓰지 않도록 막는다. 사본이 있으면 바로 보이고, 없으면 "불러오는 중".
+    setCloudLoading(true, copy !== null);
+    bookmarks = copy ? copy.items : [];
     renderBookmarks();
     updateSyncStatus();
     watchPendingWrites();
+    startCloudSync(session, cloudStore, copy !== null);
+  }
 
-    session.unsubscribe = fs.onSnapshot(cloudStore.query, { includeMetadataChanges: true }, snapshot => {
-      const list = cloudStore.fromSnapshot(snapshot);
-      const wasLoading = cloudLoading;
-      if (wasLoading) setCloudLoading(false);
-      // 내 기기의 쓰기는 이미 화면에 반영돼 있다. 같으면 다시 그리지 않아야 이동 버튼의 포커스가 유지된다.
-      if (wasLoading || JSON.stringify(list) !== JSON.stringify(bookmarks)) {
+  // 사본이 없거나 전체 동기화 주기가 지났으면 전체를 받고, 그 뒤로는 바뀐 문서만 구독한다 (D-025).
+  async function startCloudSync(session, cloudStore, hasCopy) {
+    let fullSynced = false;
+    if (!hasCopy || cloudStore.isFullSyncDue()) {
+      // 사본이 있으면 확정 안 된 쓰기가 없을 때만 전체로 바꾼다. 아니면 방금 쓴 항목이 잠시 사라진다. 못 하면 다음에 열 때.
+      const canReplace = !hasCopy || (navigator.onLine && await waitForSync(session.db, 3000));
+      if (cloud !== session) return;
+      if (canReplace) {
+        try {
+          const list = await cloudStore.fetchAll();
+          if (cloud !== session) return;
+          bookmarks = list;
+          renderBookmarks();
+          cloudStore.saveCopy();
+          session.fromCache = false;
+          fullSynced = true;
+        } catch (err) {
+          if (cloud !== session) return;
+          if (err.code === 'permission-denied') {
+            handleCloudError(err);
+            return;
+          }
+          console.warn('서버에서 전체 목록을 받지 못했습니다.', err);
+          if (!hasCopy) {
+            waitToRetrySync(session, cloudStore);
+            return;
+          }
+        }
+      }
+    }
+
+    session.unsubscribe = firebase.fs.onSnapshot(cloudStore.changesQuery(), { includeMetadataChanges: true }, snapshot => {
+      showCloudList(cloudStore.applyChanges(snapshot));
+      cloudStore.saveCopy();
+      session.fromCache = snapshot.metadata.fromCache;
+      updateSyncStatus();
+      if (!snapshot.metadata.fromCache) checkMigration(session);
+    }, handleCloudError);
+    setCloudLoading(false);
+    renderBookmarks(); // 카드의 수정·삭제·이동 버튼을 켠다
+    updateSyncStatus();
+    if (fullSynced) checkMigration(session);
+  }
+
+  // 사본 없이 서버에 닿지 못하면(오프라인 등) SDK 캐시에 남은 목록을 편집을 막은 채 보여 주고, 연결되면 다시 받는다.
+  function waitToRetrySync(session, cloudStore) {
+    cloudStore.readCache().then(list => {
+      if (cloud === session && cloudLoading && list.length) {
         bookmarks = list;
         renderBookmarks();
       }
-      session.fromCache = snapshot.metadata.fromCache;
-      updateSyncStatus();
-      // 서버 목록을 받은 뒤에야 클라우드가 비었는지 알 수 있다.
-      if (!snapshot.metadata.fromCache && !session.migrationChecked) {
-        session.migrationChecked = true;
-        offerLocalMigration(user.uid);
-      }
-    }, err => {
-      console.error(err);
-      alert(err.code === 'permission-denied'
-        ? '이 계정은 북마크 데이터에 접근할 수 없습니다.\n(허용된 계정이 아니거나 보안 규칙이 게시되지 않았습니다.)\n로그아웃합니다.'
-        : `클라우드 목록을 불러오지 못했습니다. 로그아웃합니다.\n(${err.code || err.message})`);
-      firebase.authApi.signOut(firebase.auth);
-    });
+    }, () => {});
+    let retried = false;
+    const retry = () => {
+      window.removeEventListener('online', retry);
+      if (retried || cloud !== session) return;
+      retried = true;
+      startCloudSync(session, cloudStore, false);
+    };
+    window.addEventListener('online', retry);
+    // 온라인인데 응답이 늦은 경우에는 online 이벤트가 오지 않는다.
+    setTimeout(retry, 30000);
+  }
+
+  // 서버에서 받은 변경으로 목록을 바꾼다 (원격 변경의 경로. 이 기기의 변경은 작업 함수로 한다).
+  // 내 기기의 쓰기는 이미 화면에 반영돼 있다. 같으면 다시 그리지 않아야 이동 버튼의 포커스가 유지된다.
+  function showCloudList(list) {
+    if (JSON.stringify(list) === JSON.stringify(bookmarks)) return;
+    bookmarks = list;
+    renderBookmarks();
+  }
+
+  // 서버 목록을 받은 뒤에야 클라우드가 비었는지 알 수 있다.
+  function checkMigration(session) {
+    if (session.migrationChecked) return;
+    session.migrationChecked = true;
+    offerLocalMigration(session.uid);
+  }
+
+  function handleCloudError(err) {
+    console.error(err);
+    alert(err.code === 'permission-denied'
+      ? '이 계정은 북마크 데이터에 접근할 수 없습니다.\n(허용된 계정이 아니거나 보안 규칙이 게시되지 않았습니다.)\n로그아웃합니다.'
+      : `클라우드 목록을 불러오지 못했습니다. 로그아웃합니다.\n(${err.code || err.message})`);
+    firebase.authApi.signOut(firebase.auth);
   }
 
   function leaveCloudMode() {
     const { fs } = firebase;
-    const { db, unsubscribe } = cloud;
-    unsubscribe();
+    const { db, unsubscribe, uid } = cloud;
+    if (unsubscribe) unsubscribe();
+    store.close();
+    // 공용 기기에서 로그아웃한 뒤 계정 목록이 남지 않도록 사본도 지운다 (D-025).
+    localStorage.removeItem(CLOUD_COPY_KEY_PREFIX + uid);
     cloud = null;
     store = createLocalStore();
     localStorage.removeItem(CLOUD_HINT_KEY);
@@ -607,6 +726,38 @@
       DEFAULT_BOOKMARKS.some(seed => seed.id === bm.id && seed.title === bm.title && seed.url === bm.url));
   }
 
+  // 동기화 상태 표시를 누르면 삭제 기록(묘비) 수를 보이고, 오래된 것을 비울지 묻는다 (D-025).
+  // 자동으로는 지우지 않는다. 최근 기록을 남기므로 어느 기기도 삭제를 놓치지 않는다.
+  async function cleanTombstones() {
+    const session = cloud;
+    if (!session || cloudLoading) return;
+    if (!navigator.onLine) {
+      alert('연결된 뒤에 다시 시도해 주세요.');
+      return;
+    }
+    const button = document.getElementById('syncStatus');
+    button.disabled = true;
+    try {
+      const count = await store.countTombstones();
+      if (cloud !== session) return;
+      if (count === 0) {
+        alert('삭제 기록이 없습니다.');
+        return;
+      }
+      const kb = Math.max(1, Math.round(count * TOMBSTONE_BYTES / 1024));
+      if (!confirm(`삭제 기록 ${count}개(약 ${kb}KB)가 있습니다. ${TOMBSTONE_KEEP_DAYS}일이 지난 기록을 비울까요?\n` +
+        `(다른 기기에서 지운 북마크가 되살아나지 않도록 최근 ${TOMBSTONE_KEEP_DAYS}일 기록은 남깁니다.)`)) return;
+      const removed = await store.purgeTombstones(Date.now() - TOMBSTONE_KEEP_DAYS * DAY_MS);
+      if (cloud !== session) return;
+      alert(removed > 0 ? `${removed}개를 비웠습니다.` : `${TOMBSTONE_KEEP_DAYS}일이 지난 삭제 기록이 없습니다.`);
+    } catch (err) {
+      console.error(err);
+      if (cloud === session) alert(`삭제 기록을 확인하지 못했습니다. 연결된 뒤에 다시 시도해 주세요.\n(${err.code || err.message})`);
+    } finally {
+      button.disabled = false;
+    }
+  }
+
   function reportWriteError(err) {
     console.error(err);
     // 한 작업이 여러 배치로 나뉘어 실패해도 알림은 한 번만 띄운다.
@@ -616,10 +767,18 @@
   }
 
   // 경로 users/{uid}/bookmarks/{id}. 순서는 order 필드로 저장해 이동 한 번에 문서 하나만 쓴다 (D-020).
-  function createCloudStore(db, uid) {
+  // 계정 목록의 사본을 localStorage에 두고, 서버에서는 마지막으로 받은 뒤 바뀐 문서만 받는다 (D-025).
+  // 사본은 "무엇을 보여 줄지", SDK의 IndexedDB 캐시는 "무엇을 올릴지"(앱을 닫아도 남는 오프라인 쓰기 대기열)를 맡는다.
+  function createCloudStore(db, uid, copy) {
     const { fs } = firebase;
     const collectionRef = fs.collection(db, 'users', uid, 'bookmarks');
-    const orders = new Map(); // id → order. 스냅샷과 내 쓰기로 갱신한다.
+    const tombstoneQuery = fs.query(collectionRef, fs.where('deleted', '==', true));
+    const copyKey = CLOUD_COPY_KEY_PREFIX + uid;
+    const orders = copy ? copy.orders : new Map(); // id → order. 사본, 받은 문서, 내 쓰기로 갱신한다.
+    // 받은 문서의 updatedAt 최댓값. 기기 시계가 틀려도 변경을 빠뜨리지 않도록 서버 시각만 쓴다.
+    let lastSync = copy ? copy.lastSync : 0;
+    let lastFullSync = copy ? copy.lastFullSync : 0; // 기기 시각. 전체 동기화 주기를 판단할 때만 쓴다
+    let closed = false; // 로그아웃한 뒤 늦게 끝난 작업이 화면과 사본을 건드리지 않도록
 
     function docRef(id) {
       return fs.doc(collectionRef, String(id));
@@ -629,34 +788,92 @@
       return { title: bm.title, url: bm.url, category: bm.category, addedAt: bm.addedAt, order, updatedAt: fs.serverTimestamp() };
     }
 
+    // 삭제한 북마크. 다른 필드는 지운다 (setDoc은 문서 전체를 바꾼다).
+    function tombstone() {
+      return { deleted: true, updatedAt: fs.serverTimestamp() };
+    }
+
     function minOrder() {
       return orders.size ? Math.min(...orders.values()) : 0;
     }
 
-    // 오프라인에서는 서버가 받을 때까지 끝나지 않으므로 기다리지 않고 오류만 받는다.
-    function track(promise) {
-      promise.catch(reportWriteError);
-      watchPendingWrites();
+    function updatedAtOf(docSnap) {
+      const time = docSnap.get('updatedAt');
+      return time && typeof time.toMillis === 'function' ? time.toMillis() : 0;
     }
 
-    // 다른 기기에서 지운 북마크를 고치거나 옮기면, 일부 필드만 보낸 쓰기라 규칙이 먼저 거부한다(permission-denied).
-    // 서버에 문서가 정말 없으면 삭제가 이긴 것이므로 알리지 않는다 (D-020).
-    function trackUpdate(ref, promise) {
+    // Firestore 문서도 외부 입력이다. 문서 ID와 맞지 않는 항목은 새 ID를 주면 문서와 어긋나므로 건너뛴다.
+    function readDoc(docSnap) {
+      const data = docSnap.data();
+      const bm = normalizeBookmark({ ...data, id: docSnap.id });
+      if (!bm || String(bm.id) !== docSnap.id || !Number.isFinite(data.order)) return null;
+      return { bm, order: data.order };
+    }
+
+    // Firestore의 orderBy('order')와 같게, order가 같으면 문서 ID 순
+    function sortByOrder(list) {
+      return list.sort((a, b) => orders.get(a.id) - orders.get(b.id) ||
+        (String(a.id) < String(b.id) ? -1 : String(a.id) > String(b.id) ? 1 : 0));
+    }
+
+    function saveCopy() {
+      if (closed) return;
+      try {
+        localStorage.setItem(copyKey, JSON.stringify({
+          version: CLOUD_COPY_VERSION, lastSync, lastFullSync,
+          items: bookmarks.map(bm => ({ ...bm, order: orders.get(bm.id) }))
+        }));
+      } catch (err) {
+        // 용량 초과 등. 알리지 않고, 남은 사본을 지워 다음에 열 때 전체를 받게 한다.
+        console.warn('계정 목록의 사본을 저장하지 못했습니다.', err);
+        localStorage.removeItem(copyKey);
+      }
+    }
+
+    // 오프라인에서는 서버가 받을 때까지 끝나지 않으므로 기다리지 않고 오류만 받는다.
+    // 거부되면 SDK는 자기 캐시만 되돌리므로, 서버의 그 문서를 다시 읽어 화면과 사본을 서버 값으로 맞춘다.
+    // deleteWins: 다른 기기에서 지운 북마크(묘비 또는 문서 없음)를 고치거나 옮기면 규칙이 거부하는데(permission-denied),
+    // 이때는 삭제가 이긴 것이므로 알리지 않는다 (D-020).
+    function track(id, promise, deleteWins = false) {
       promise.catch(err => {
-        if (err.code !== 'permission-denied' && err.code !== 'not-found') return reportWriteError(err);
-        fs.getDocFromServer(ref)
-          .then(snap => snap.exists() ? reportWriteError(err) : console.warn('이미 삭제된 북마크라 변경을 버렸습니다.', err))
-          .catch(() => reportWriteError(err));
+        if (closed) return;
+        fs.getDocFromServer(docRef(id)).then(docSnap => {
+          if (closed) return;
+          const doc = docSnap.exists() && docSnap.get('deleted') !== true ? readDoc(docSnap) : null;
+          const list = bookmarks.filter(bm => bm.id !== id);
+          if (doc) {
+            orders.set(id, doc.order);
+            list.push(doc.bm);
+          } else {
+            orders.delete(id);
+          }
+          showCloudList(sortByOrder(list));
+          saveCopy();
+          if (!doc && deleteWins && (err.code === 'permission-denied' || err.code === 'not-found')) {
+            console.warn('이미 삭제된 북마크라 변경을 버렸습니다.', err);
+          } else {
+            reportWriteError(err);
+          }
+        }).catch(() => reportWriteError(err));
       });
       watchPendingWrites();
     }
 
-    function commitInBatches(ops) {
+    // 여러 문서를 쓰다 거부되면 어느 문서가 어긋났는지 알 수 없으므로, 다음에 열 때 전체를 다시 받게 한다.
+    function commitInBatches(ops, resyncOnError = true) {
       for (let i = 0; i < ops.length; i += MAX_BATCH_WRITES) {
         const batch = fs.writeBatch(db);
         ops.slice(i, i + MAX_BATCH_WRITES).forEach(op => op(batch));
-        track(batch.commit());
+        batch.commit().catch(err => {
+          if (closed) return;
+          if (resyncOnError) {
+            lastFullSync = 0;
+            saveCopy();
+          }
+          reportWriteError(err);
+        });
       }
+      watchPendingWrites();
     }
 
     function setAll(list, firstOrder) {
@@ -677,36 +894,109 @@
     }
 
     return {
-      query: fs.query(collectionRef, fs.orderBy('order')),
+      saveCopy,
 
-      // Firestore 문서도 외부 입력이다. 문서 ID와 맞지 않는 항목은 새 ID를 주면 문서와 어긋나므로 건너뛴다.
-      fromSnapshot(snapshot) {
+      close() {
+        closed = true;
+      },
+
+      // 기기 시계가 뒤로 간 경우에도 멈추지 않도록 음수도 주기가 된 것으로 본다.
+      isFullSyncDue() {
+        const age = Date.now() - lastFullSync;
+        return age < 0 || age >= FULL_SYNC_INTERVAL_DAYS * DAY_MS;
+      },
+
+      // 전체 받기. 묘비는 order가 없어 orderBy('order') 결과에 들어오지 않으므로 묘비가 쌓여도 읽기가 늘지 않는다.
+      // 받는 동안 생긴 변경은 lastSync부터의 구독이 이어서 받는다.
+      async fetchAll() {
+        const snapshot = await withTimeout(fs.getDocsFromServer(fs.query(collectionRef, fs.orderBy('order'))), SERVER_FETCH_TIMEOUT_MS);
+        const list = [];
+        let newest = 0;
         orders.clear();
+        snapshot.forEach(docSnap => {
+          newest = Math.max(newest, updatedAtOf(docSnap));
+          const doc = readDoc(docSnap);
+          if (!doc) return;
+          orders.set(doc.bm.id, doc.order);
+          list.push(doc.bm);
+        });
+        lastSync = newest;
+        lastFullSync = Date.now();
+        return list;
+      },
+
+      // 서버에 닿지 못할 때 보여 줄 SDK 캐시의 목록. 편집은 막은 채로만 쓴다(orders는 건드리지 않음).
+      async readCache() {
+        const snapshot = await fs.getDocsFromCache(fs.query(collectionRef, fs.orderBy('order')));
         const list = [];
         snapshot.forEach(docSnap => {
-          const data = docSnap.data();
-          const bm = normalizeBookmark({ ...data, id: docSnap.id });
-          if (!bm || String(bm.id) !== docSnap.id || typeof data.order !== 'number') return;
-          orders.set(bm.id, data.order);
-          list.push(bm);
+          const doc = readDoc(docSnap);
+          if (doc) list.push(doc.bm);
         });
         return list;
+      },
+
+      // 마지막으로 받은 뒤 바뀐 문서만. 같은 시각의 문서를 놓치지 않도록 >=로 받고, 다시 온 문서는 같은 내용으로 덮어쓴다.
+      changesQuery() {
+        return fs.query(collectionRef, fs.where('updatedAt', '>=', fs.Timestamp.fromMillis(lastSync)));
+      },
+
+      // 묘비는 삭제로, 나머지는 추가·교체로 합친다. 'removed'는 삭제가 아니다: 이 기기의 쓰기는 확정되기 전에
+      // updatedAt(serverTimestamp)이 조건에 맞지 않아 결과에서 잠시 빠졌다가 확정되면 다시 온다. 확정 전의 쓰기도 그때 합친다.
+      applyChanges(snapshot) {
+        const byId = new Map(bookmarks.map(bm => [bm.id, bm]));
+        snapshot.docChanges({ includeMetadataChanges: true }).forEach(({ type, doc: docSnap }) => {
+          if (type === 'removed' || docSnap.metadata.hasPendingWrites) return;
+          if (docSnap.get('deleted') === true) {
+            byId.delete(Number(docSnap.id));
+            orders.delete(Number(docSnap.id));
+            return;
+          }
+          const doc = readDoc(docSnap);
+          if (!doc) return;
+          byId.set(doc.bm.id, doc.bm);
+          orders.set(doc.bm.id, doc.order);
+        });
+        // 캐시에서 온 결과는 서버의 일부일 수 있어, 서버에서 온 결과로만 lastSync를 올린다.
+        if (!snapshot.metadata.fromCache) {
+          snapshot.forEach(docSnap => {
+            if (!docSnap.metadata.hasPendingWrites) lastSync = Math.max(lastSync, updatedAtOf(docSnap));
+          });
+        }
+        return sortByOrder([...byId.values()]);
+      },
+
+      // 묘비 수. 단일 조건이라 색인 설정 없이 되고, 묘비 1,000개당 읽기 1회.
+      async countTombstones() {
+        const snapshot = await withTimeout(fs.getCountFromServer(tombstoneQuery), SERVER_FETCH_TIMEOUT_MS);
+        return snapshot.data().count;
+      },
+
+      // before(ms)보다 오래된 묘비만 지운다. 읽기·삭제가 묘비 수만큼 든다. 이미 지운 문서를 또 지워도 무해하다.
+      async purgeTombstones(before) {
+        const snapshot = await withTimeout(fs.getDocsFromServer(tombstoneQuery), SERVER_FETCH_TIMEOUT_MS);
+        const old = snapshot.docs.filter(docSnap => updatedAtOf(docSnap) < before);
+        commitInBatches(old.map(docSnap => batch => batch.delete(docSnap.ref)), false);
+        return old.length;
       },
 
       add(item) {
         const order = minOrder() - ORDER_GAP;
         orders.set(item.id, order);
-        track(fs.setDoc(docRef(item.id), toDoc(item, order)));
+        track(item.id, fs.setDoc(docRef(item.id), toDoc(item, order)));
+        saveCopy();
       },
 
       update(id, fields) {
-        const ref = docRef(id);
-        trackUpdate(ref, fs.updateDoc(ref, { ...fields, updatedAt: fs.serverTimestamp() }));
+        track(id, fs.updateDoc(docRef(id), { ...fields, updatedAt: fs.serverTimestamp() }), true);
+        saveCopy();
       },
 
+      // 문서를 지우면 바뀐 것만 받는 다른 기기가 삭제를 알 수 없으므로 묘비로 바꾼다 (D-025).
       remove(id) {
         orders.delete(id);
-        track(fs.deleteDoc(docRef(id)));
+        track(id, fs.setDoc(docRef(id), tombstone()), true);
+        saveCopy();
       },
 
       // 옮긴 자리의 앞뒤 이웃 order 사이 값을 준다.
@@ -717,6 +1007,7 @@
         if (before !== undefined && after !== undefined) {
           if (!(after - before > MIN_ORDER_GAP)) {
             renumberAll();
+            saveCopy();
             return;
           }
           order = (before + after) / 2;
@@ -726,20 +1017,22 @@
           order = before + ORDER_GAP;
         }
         orders.set(id, order);
-        const ref = docRef(id);
-        trackUpdate(ref, fs.updateDoc(ref, { order, updatedAt: fs.serverTimestamp() }));
+        track(id, fs.updateDoc(docRef(id), { order, updatedAt: fs.serverTimestamp() }), true);
+        saveCopy();
       },
 
-      // 덮어쓰기: 새 목록에 없는 문서는 지우고 나머지는 새로 쓴다.
+      // 덮어쓰기: 새 목록에 없는 문서는 묘비로 바꾸고 나머지는 새로 쓴다.
       replaceAll(list) {
         const keep = new Set(list.map(bm => bm.id));
-        const deletes = [...orders.keys()].filter(id => !keep.has(id)).map(id => batch => batch.delete(docRef(id)));
+        const deletes = [...orders.keys()].filter(id => !keep.has(id)).map(id => batch => batch.set(docRef(id), tombstone()));
         orders.clear();
         commitInBatches([...deletes, ...setAll(list, 0)]);
+        saveCopy();
       },
 
       mergeAll(list) {
         commitInBatches(setAll(list, minOrder() - ORDER_GAP * list.length));
+        saveCopy();
       }
     };
   }
@@ -802,14 +1095,16 @@
     grid.innerHTML = '';
 
     if (filtered.length === 0) {
-      grid.innerHTML = `<p style="grid-column: 1/-1; text-align: center; color: var(--text-muted); padding: 48px 0;">${cloudLoading ? '계정 목록을 불러오는 중…' : '북마크가 없습니다.'}</p>`;
+      grid.innerHTML = `<p style="grid-column: 1/-1; text-align: center; color: var(--text-muted); padding: 48px 0;">${cloudLoading && bookmarks.length === 0 ? '계정 목록을 불러오는 중…' : '북마크가 없습니다.'}</p>`;
       return;
     }
 
+    // 계정이 준비되기 전(사본을 보이는 중)에는 보기·검색·내보내기만 된다 (D-025).
+    const locked = cloudLoading;
     filtered.forEach((bm, index) => {
       const card = document.createElement('div');
       card.className = 'card';
-      card.setAttribute('draggable', 'true');
+      card.setAttribute('draggable', String(!locked));
       card.dataset.id = bm.id;
 
       card.innerHTML = `
@@ -826,11 +1121,11 @@
         </div>
         <div class="card-actions">
           <div class="move-group">
-            <button class="btn-outline btn-action" data-action="move-prev" title="앞으로 이동" aria-label="앞으로 이동" ${index === 0 ? 'disabled' : ''}>←</button>
-            <button class="btn-outline btn-action" data-action="move-next" title="뒤로 이동" aria-label="뒤로 이동" ${index === filtered.length - 1 ? 'disabled' : ''}>→</button>
+            <button class="btn-outline btn-action" data-action="move-prev" title="앞으로 이동" aria-label="앞으로 이동" ${locked || index === 0 ? 'disabled' : ''}>←</button>
+            <button class="btn-outline btn-action" data-action="move-next" title="뒤로 이동" aria-label="뒤로 이동" ${locked || index === filtered.length - 1 ? 'disabled' : ''}>→</button>
           </div>
-          <button class="btn-outline btn-action" data-action="edit">수정</button>
-          <button class="btn-delete btn-action" data-action="delete">삭제</button>
+          <button class="btn-outline btn-action" data-action="edit" ${locked ? 'disabled' : ''}>수정</button>
+          <button class="btn-delete btn-action" data-action="delete" ${locked ? 'disabled' : ''}>삭제</button>
         </div>
       `;
 
@@ -1216,7 +1511,7 @@
 
   // 초기화 실행
   initTheme();
-  setCloudLoading(cloudLoading);
+  setCloudLoading(cloudLoading, bootCopy !== null);
   renderBookmarks();
   initCloud();
   window.addEventListener('online', updateSyncStatus);
