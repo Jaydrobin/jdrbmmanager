@@ -432,7 +432,7 @@
   // 형식이 틀리면 기본 프로젝트에 조용히 붙지 않도록 클라우드를 끈다.
   function resolveFirebaseConfig() {
     const appConfig = window.APP_CONFIG;
-    if (appConfig === undefined) return DEFAULT_FIREBASE_CONFIG;
+    if (appConfig === undefined && !isAppConfigDeclared()) return DEFAULT_FIREBASE_CONFIG;
     if (appConfig !== null && typeof appConfig === 'object' && !Array.isArray(appConfig)) {
       if (!('firebase' in appConfig)) return DEFAULT_FIREBASE_CONFIG;
       const config = appConfig.firebase;
@@ -442,8 +442,18 @@
         return { ...config };
       }
     }
-    console.warn(`config.js의 설정 형식이 올바르지 않아 로컬 모드로 동작합니다. window.APP_CONFIG.firebase에 ${FIREBASE_REQUIRED_KEYS.join(', ')}가 있어야 합니다.`);
+    console.warn(`config.js의 설정 형식이 올바르지 않아 로컬 모드로 동작합니다. window.APP_CONFIG = { firebase: { ${FIREBASE_REQUIRED_KEYS.join(', ')}, … } } 형태로 대입해야 합니다.`);
     return null;
+  }
+
+  // config.js에서 const·let APP_CONFIG로 선언하면 window의 속성이 되지 않아 읽히지 않는다(조용히 기본 설정이 되지 않게 형식 오류로 본다).
+  // 선언 도중 오류가 나 초기화되지 않은 이름은 typeof도 예외를 던지므로 try로 감싼다.
+  function isAppConfigDeclared() {
+    try {
+      return typeof APP_CONFIG !== 'undefined';
+    } catch {
+      return true;
+    }
   }
 
   // http(s)로 열었는지. 서비스 워커는 클라우드 설정과 관계없이 이것만 본다.
