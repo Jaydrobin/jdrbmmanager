@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>나만의 북마크 관리자</title>
-  <!-- 홈 화면에 추가(설치)와 오프라인용. 경로는 모두 상대 경로 (SYNC-DESIGN.md 3.12) -->
+  <!-- 홈 화면에 추가(설치)와 오프라인용. 경로는 모두 상대 경로 (D-023) -->
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icons/icon-192.png" type="image/png">
   <link rel="apple-touch-icon" href="icons/icon-192.png">
@@ -264,7 +264,7 @@
     return list.reduce((max, bm) => Math.max(max, bm.id || 0), 0);
   }
 
-  // 두 기기가 오프라인에서 같은 ID를 만들지 않도록 ms 시각에 난수 세 자리를 붙인다 (SYNC-DESIGN.md 3.4).
+  // 두 기기가 오프라인에서 같은 ID를 만들지 않도록 ms 시각에 난수 세 자리를 붙인다 (D-003).
   // 가져온 ID가 더 클 수 있어 최대값 이후로 발급한다. 2255년까지 안전한 정수 범위.
   function generateId(currentMaxId) {
     return Math.max(Date.now() * 1000 + Math.floor(Math.random() * 1000), currentMaxId + 1);
@@ -320,7 +320,7 @@
   /* ------------- 저장소 및 상태 작업 ------------- */
   // store 메서드는 작업 함수가 메모리 배열을 바꾼 뒤에 호출된다:
   // add(item), update(id, fields), remove(id), move(id, toIndex), replaceAll(list), mergeAll(list)
-  // LocalStore는 어떤 변경이든 배열 전체를 저장하고, 클라우드 저장소는 바뀐 항목만 쓴다 (SYNC-DESIGN.md 3.5).
+  // LocalStore는 어떤 변경이든 배열 전체를 저장하고, 클라우드 저장소는 바뀐 항목만 쓴다 (D-020).
   function createLocalStore() {
     function saveAll() {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(bookmarks));
@@ -374,7 +374,7 @@
 
   /* ------------- 로그인 및 클라우드 동기화 ------------- */
   // 로그인하면 store를 CloudStore로 바꾸고 Firestore 목록을 보여 준다. 로그아웃하면 localStorage의 로컬 목록으로 돌아간다.
-  // file://로 열었거나 Firebase를 불러오지 못하면 로그인 버튼 없이 로컬 모드로만 동작한다 (SYNC-DESIGN.md 3.3).
+  // file://로 열었거나 Firebase를 불러오지 못하면 로그인 버튼 없이 로컬 모드로만 동작한다 (D-019).
   const ORDER_GAP = 1024;
   const MIN_ORDER_GAP = 1e-6;
   const MAX_BATCH_WRITES = 500;
@@ -416,7 +416,7 @@
       showLocalListIfLoading();
       return;
     }
-    // 리디렉트 로그인은 앱 주소가 authDomain과 같을 때만 쓴다 (SYNC-DESIGN.md 3.7).
+    // 리디렉트 로그인은 앱 주소가 authDomain과 같을 때만 쓴다 (D-021).
     if (location.hostname === FIREBASE_CONFIG.authDomain) {
       firebase.authApi.getRedirectResult(firebase.auth).catch(err => console.warn(err));
     }
@@ -579,13 +579,13 @@
     bookmarks = loadBookmarks();
     renderBookmarks();
     updateSyncStatus();
-    // 로그아웃하면 이 기기의 클라우드 캐시를 지운다 (SYNC-DESIGN.md 3.3). 앱이 다른 탭에도 열려 있으면 실패할 수 있다.
+    // 로그아웃하면 이 기기의 클라우드 캐시를 지운다 (D-019). 앱이 다른 탭에도 열려 있으면 실패할 수 있다.
     fs.terminate(db)
       .then(() => fs.clearIndexedDbPersistence(db))
       .catch(err => console.warn('클라우드 캐시를 지우지 못했습니다.', err));
   }
 
-  // 첫 로그인 때 이 기기의 로컬 목록을 계정에 올릴지 기기마다 한 번 묻는다 (SYNC-DESIGN.md 3.11).
+  // 첫 로그인 때 이 기기의 로컬 목록을 계정에 올릴지 기기마다 한 번 묻는다 (D-019).
   function offerLocalMigration(uid) {
     const key = MIGRATED_KEY_PREFIX + uid;
     if (localStorage.getItem(key)) return;
@@ -615,7 +615,7 @@
     alert(`클라우드에 저장하지 못했습니다. 화면의 변경이 되돌려질 수 있습니다.\n(${err.code || err.message})`);
   }
 
-  // 경로 users/{uid}/bookmarks/{id}. 순서는 order 필드로 저장해 이동 한 번에 문서 하나만 쓴다 (SYNC-DESIGN.md 3.4).
+  // 경로 users/{uid}/bookmarks/{id}. 순서는 order 필드로 저장해 이동 한 번에 문서 하나만 쓴다 (D-020).
   function createCloudStore(db, uid) {
     const { fs } = firebase;
     const collectionRef = fs.collection(db, 'users', uid, 'bookmarks');
@@ -640,7 +640,7 @@
     }
 
     // 다른 기기에서 지운 북마크를 고치거나 옮기면, 일부 필드만 보낸 쓰기라 규칙이 먼저 거부한다(permission-denied).
-    // 서버에 문서가 정말 없으면 삭제가 이긴 것이므로 알리지 않는다 (SYNC-DESIGN.md 3.6).
+    // 서버에 문서가 정말 없으면 삭제가 이긴 것이므로 알리지 않는다 (D-020).
     function trackUpdate(ref, promise) {
       promise.catch(err => {
         if (err.code !== 'permission-denied' && err.code !== 'not-found') return reportWriteError(err);
