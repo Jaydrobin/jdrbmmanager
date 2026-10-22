@@ -55,7 +55,7 @@ A lightweight, build-free bookmark manager: drag-and-drop (plus touch- and keybo
 
 ## 설치·배포
 
-PC에 설치할 도구는 없습니다(Node.js 불필요). Firebase는 **Spark(무료) 요금제**로 쓰며 결제 수단을 등록하지 않습니다.
+앱을 쓰고 배포하는 데 설치할 도구는 없습니다(Node.js 불필요. 자동 시험을 돌릴 때만 필요, 아래 "자동 시험"). Firebase는 **Spark(무료) 요금제**로 쓰며 결제 수단을 등록하지 않습니다.
 
 ### 파일 구성
 
@@ -66,6 +66,7 @@ PC에 설치할 도구는 없습니다(Node.js 불필요). Firebase는 **Spark(�
 | `sw.js` | 서비스 워커 (오프라인 앱 셸). 캐시 이름 `CACHE_NAME`, SDK 주소 `SDK_BASE`, 없어도 되는 파일 `OPTIONAL_FILES`(`config.js`) |
 | `manifest.webmanifest`, `icons/` | 홈 화면 설치용 |
 | `firestore.rules` | Firestore 보안 규칙. 호스팅과 별도로 Firebase 콘솔에 게시 |
+| `tests/` | 자동 회귀 시험 (`run.mjs` 러너, `run.html` 하네스, `cases.js` 시험 목록). 앱이 쓰지 않으며 캐시하지 않음 |
 
 Firebase 설정값(apiKey 등, `index.html`의 `DEFAULT_FIREBASE_CONFIG` 또는 `config.js`)과 허용 UID는 공개돼도 되는 값입니다. 데이터는 보안 규칙과 승인된 도메인으로 보호합니다. 저장소 전체가 공개 사이트로 배포되므로 비밀 값(서비스 계정 키 등)은 절대 넣지 않습니다.
 
@@ -122,7 +123,22 @@ Firebase 설정값(apiKey 등, `index.html`의 `DEFAULT_FIREBASE_CONFIG` 또는 
 배포 직후 폰에서는 이전 버전이 한 번 보일 수 있습니다. 앱을 다시 열면 새 버전으로 바뀝니다.
 
 ### 로컬에서 확인
-로그인·서비스 워커는 `file://`에서 동작하지 않으므로 저장소 폴더를 `http://localhost:포트`로 서비스해 확인합니다(아무 정적 서버나 가능).
+로그인·서비스 워커는 `file://`에서 동작하지 않으므로 저장소 폴더를 `http://localhost:포트`로 서비스해 확인합니다(아무 정적 서버나 가능). 포트 8766은 자동 시험 전용이라 쓰지 않습니다.
+
+### 자동 시험
+로컬 모드의 회귀 시험(CLAUDE.md 코드 점검 규약 3의 1~11, 22~24의 설정 판정, XSS·360px 점검)을 헤드리스 브라우저로 돌립니다. 필요한 것: Node.js(내장 모듈만, `npm install` 없음)와 크롬 또는 엣지.
+
+```bash
+node tests/run.mjs
+```
+
+- 출력: `자동 시험: 통과 n/전체 m`, 실패 목록, 수동으로 남은 번호. 종료 코드는 모두 통과 0, 실패 1, 하네스·브라우저·포트 오류 2.
+- `node tests/run.mjs --mutants`: 앱 원문에 알려진 결함(`tests/cases.js`의 `MUTANTS`)을 하나씩 넣어 시험이 잡는지 확인합니다. 작업 트리의 `index.html`은 바꾸지 않습니다.
+- `node tests/run.mjs --serve`: 서버만 띄웁니다. 보통 브라우저로 `http://127.0.0.1:8766/tests/run.html`을 열어 실패를 들여다봅니다(Ctrl+C로 끝).
+- 브라우저는 `BROWSER_PATH` 환경 변수 → 크롬 → 엣지 순으로 찾습니다.
+- 시험은 `127.0.0.1:8766`(앱과 다른 출처)에서, 실행마다 새로 만드는 임시 브라우저 프로필로 돌아 실제 앱 데이터와 섞이지 않습니다. 시험 중에는 Firebase·파비콘 등 외부 주소에 접속하지 않습니다. `run.html`은 포트 8766이 아니면(GitHub Pages 포함) 아무것도 하지 않습니다.
+- 시간 제한: 시험 하나 10초, 전체 60초(변이 점검 300초).
+- 클라우드 모드(12~21)와 사람이 봐야 하는 확인은 자동화하지 않았습니다.
 
 ### 폰 테스트 (머지 전 브랜치 확인)
 Pages는 `main`을 배포하므로, 머지 전에 폰에서 확인하려면 배포 브랜치를 잠시 바꿉니다.
