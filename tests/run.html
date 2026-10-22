@@ -45,6 +45,10 @@
   let appSource = '';
   let currentMutation = null;
 
+  // cases.js가 문법 오류 등으로 끝까지 실행되지 않으면 시험이 빠진 채 통과로 보이므로 하네스 오류로 본다.
+  const loadErrors = [];
+  window.addEventListener('error', e => loadErrors.push(e.message));
+
   class HarnessError extends Error {}
 
   function test(group, name, fn) {
@@ -307,6 +311,8 @@
       return;
     }
     try {
+      if (loadErrors.length) throw new HarnessError(`시험 파일 오류: ${loadErrors.join(' / ')}`);
+      if (tests.length === 0) throw new HarnessError('등록된 시험이 없습니다.');
       await clearServiceWorkers();
       const response = await fetch(new URL('../index.html', location.href), { cache: 'no-store' });
       if (!response.ok) throw new HarnessError(`index.html을 받지 못함 (${response.status})`);
