@@ -4,6 +4,7 @@
 
 - 기능 목록, 데이터 모델(localStorage·Firestore), 설계 결정(D-NNN), 알려진 문제(K-NN): [docs/DECISIONS.md](docs/DECISIONS.md) — **작업 전에 읽는다**(읽는 방법은 작성 절차 8). 동기화 설계는 D-017~D-023, 바뀐 것만 받기(계정 목록 사본·묘비)는 D-025, 배포별 설정 파일은 D-026.
 - 사용법, Firebase·GitHub Pages 설정, 포크해서 자기 Firebase 프로젝트로 쓰기, 배포·폰 테스트·호스팅 이전 절차: [README.md](README.md).
+- 진행 중인 설계: 자동 회귀 시험(K-23, D-027) [docs/TEST-RUNNER-DESIGN.md](docs/TEST-RUNNER-DESIGN.md) — 7장의 단계대로 구현한다.
 
 ## 구조
 
