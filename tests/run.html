@@ -65,7 +65,13 @@
     if (!condition) throw new Error(label);
   }
 
+  // DOM 요소는 JSON으로 바꾸면 모두 "{}"라 같은 요소인지(===)로 비교한다.
   function eq(actual, expected, label) {
+    const isNode = value => value !== null && typeof value === 'object' && typeof value.nodeType === 'number';
+    if (isNode(actual) || isNode(expected)) {
+      if (actual !== expected) throw new Error(`${label} — 다른 요소 (실제 ${actual ? actual.outerHTML.slice(0, 120) : actual})`);
+      return;
+    }
     if (JSON.stringify(actual) !== JSON.stringify(expected)) {
       throw new Error(`${label} — 기대 ${format(expected)}, 실제 ${format(actual)}`);
     }

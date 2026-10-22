@@ -50,11 +50,17 @@ function serveFile(req, res) {
     res.writeHead(400).end();
     return;
   }
+  // NUL이 든 경로는 fs가 예외를 던져 서버가 죽는다.
+  if (pathname.includes('\0')) {
+    res.writeHead(400).end();
+    return;
+  }
   if (pathname.endsWith('/')) pathname += 'index.html';
-  // 저장소 폴더 밖은 내주지 않는다.
+  // 저장소 폴더 밖과 .git은 내주지 않는다. 윈도우는 대소문자와 이름 끝의 점·공백을 무시하므로(.GIT, .git.) 맞춰 비교한다.
   const file = path.resolve(ROOT, '.' + pathname);
   const relative = path.relative(ROOT, file);
-  if (relative.startsWith('..') || path.isAbsolute(relative) || relative.split(path.sep).includes('.git')) {
+  const isGitPath = relative.toLowerCase().split(path.sep).some(part => part.replace(/[. ]+$/, '') === '.git');
+  if (relative.startsWith('..') || path.isAbsolute(relative) || isGitPath) {
     res.writeHead(404).end();
     return;
   }

@@ -501,8 +501,9 @@ function configWarnings(app) {
   return app.rec.warnings.filter(message => message.includes('config.js'));
 }
 
-test('22', 'config.js가 없거나 템플릿 그대로면 기본 설정, 경고 없음', async t => {
-  for (const [label, config] of [['파일 없음', null], ['저장소의 템플릿', undefined], ['firebase 키 없음', 'window.APP_CONFIG = {};']]) {
+// 저장소의 config.js는 포크마다 다를 수 있어(D-026) 판정하지 않는다. 그 파일로 앱이 멈추지 않는지는 다른 모든 시험이 본다.
+test('22', 'config.js가 없거나 firebase 키가 없으면 기본 설정, 경고 없음', async t => {
+  for (const [label, config] of [['파일 없음', null], ['firebase 키 없음', 'window.APP_CONFIG = {};']]) {
     const app = await t.open({ config });
     eq(app.state.firebaseConfig, app.state.defaultFirebaseConfig, `${label}: 쓸 설정`);
     eq(configWarnings(app), [], `${label}: 경고`);
@@ -559,6 +560,7 @@ const MUTANTS = [
   { name: 'URL 스킴 검사 제거', replace: [["return protocol === 'http:' || protocol === 'https:';", 'return true;']] },
   { name: 'URL 길이 검사 제거', replace: [['if (!title || !isSafeUrl(url) || url.length > MAX_URL_LENGTH) return null;', 'if (!title || !isSafeUrl(url)) return null;']] },
   { name: '카드 href 이스케이프 제거 (K-01)', replace: [['href="${escapeHtml(bm.url)}"', 'href="${bm.url}"']] },
+  { name: '이동 뒤 포커스 되돌리기 제거 (D-016)', replace: [['if (button) button.focus();', '']] },
   { name: '병합 ID 중복 검사 제거 (K-05)', replace: [['if (bm.id === null || usedIds.has(bm.id)) bm.id = nextId++;', 'if (bm.id === null) bm.id = nextId++;']] },
   {
     name: '카테고리 목록을 필터 뒤에 갱신 (K-07)',
