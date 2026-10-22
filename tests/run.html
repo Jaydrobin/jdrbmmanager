@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>자동 회귀 시험</title>
+  <style>
+    :root { --bg: #f8fafc; --text: #0f172a; --muted: #64748b; --pass: #15803d; --fail: #b91c1c; --border: #e2e8f0; }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg: #0f172a; --text: #e2e8f0; --muted: #94a3b8; --pass: #4ade80; --fail: #f87171; --border: #334155; }
+    }
+    body { margin: 0; padding: 16px; background: var(--bg); color: var(--text); font-family: system-ui, sans-serif; }
+    h1 { font-size: 1.25rem; margin: 0 0 8px; }
+    #summary { font-weight: 600; }
+    #results { padding-left: 0; list-style: none; font-size: 0.9rem; }
+    #results li { padding: 2px 0; overflow-wrap: anywhere; }
+    .pass { color: var(--pass); }
+    .fail { color: var(--fail); }
+    .group { color: var(--muted); }
+    #stage iframe { border: 1px solid var(--border); height: 700px; display: block; margin-top: 8px; }
+  </style>
+</head>
+<body>
+<h1>자동 회귀 시험</h1>
+<p id="summary">준비 중…</p>
+<ul id="results"></ul>
+<div id="stage"></div>
+
+<script>
+  /* 하네스 (DECISIONS.md D-027). index.html을 srcdoc iframe에 주입해 시험마다 새 앱 인스턴스로 연다.
+     srcdoc 문서는 location이 about:이라 앱이 클라우드·서비스 워커를 켜지 않고, 주입한 CSP가 다른 출처 요청을 막는다. */
+
+  // 시험은 이 출처의 localStorage를 비운다. 앱과 같은 출처(GitHub Pages, 수동 시험 포트)에서 돌면
+  // 사용자의 로컬 목록을 지우므로 시험 전용 포트에서만 돈다. run.mjs의 PORT와 같아야 한다.
+  const TEST_PORT = '8766';
+  const TEST_TIMEOUT_MS = 10000;
+  const WAIT_TIMEOUT_MS = 3000;
+  const CONFIG_TAG = '<script src="config.js"><\/script>';
+  const FAVICON_PREFIX = 'https://www.google.com/s2/favicons';
+  // 자동화하지 않는 번호 (CLAUDE.md 코드 점검 규약 3)
+  const MANUAL = '12~21, 22~24의 로그인 버튼·서비스 워커 부분, 사람이 봐야 하는 확인(대화상자 모양, 다크 모드 가독성, 크롬에서 실제로 가져오기)';
+
+  const params = new URLSearchParams(location.search);
+  const tests = [];
+  let appSource = '';
+  let currentMutation = null;
+
+  class HarnessError extends Error {}
+
+  function test(group, name, fn) {
+    tests.push({ group, name, fn });
+  }
+
+  /* ---------- 단언 ---------- */
+  function format(value) {
+    const text = typeof value === 'string' ? JSON.stringify(value) : JSON.stringify(value) ?? String(value);
+    return text.length > 200 ? text.slice(0, 200) + '…' : text;
+  }
+
+  function ok(condition, label) {
+    if (!condition) throw new Error(label);
+  }
+
+  function eq(actual, expected, label) {
+    if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+      throw new Error(`${label} — 기대 ${format(expected)}, 실제 ${format(actual)}`);
+    }
+  }
+
+  async function waitFor(condition, label, timeout = WAIT_TIMEOUT_MS) {
+    const start = Date.now();
+    while (!condition()) {
+      if (Date.now() - start > timeout) throw new Error(`기다려도 되지 않음: ${label}`);
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
+  }
+
+  /* ---------- 앱 인스턴스 ---------- */
+  // 앱 스크립트보다 먼저 실행된다. 대화상자·콘솔 오류·막힌 요청을 기록한다.
+  const RECORDER = `<script>
+    (function () {
+      const rec = window.__rec = { dialogs: [], confirmAnswers: [], errors: [], warnings: [], blocked: [], downloads: [] };
+      window.alert = message => { rec.dialogs.push({ type: 'alert', message: String(message) }); };
+      // 답을 넣어 두지 않은 확인은 취소: 예상하지 못한 확인이 덮어쓰기 같은 동작을 하지 않게
+      window.confirm = message => {
+        rec.dialogs.push({ type: 'confirm', message: String(message) });
+        return rec.confirmAnswers.length ? rec.confirmAnswers.shift() : false;
+      };
+      window.prompt = message => { rec.dialogs.push({ type: 'prompt', message: String(message) }); return null; };
+      const consoleError = console.error.bind(console);
+      const consoleWarn = console.warn.bind(console);
+      console.error = (...args) => { rec.errors.push(args.map(String).join(' ')); consoleError(...args); };
+      console.warn = (...args) => { rec.warnings.push(args.map(String).join(' ')); consoleWarn(...args); };
+      window.addEventListener('error', e => rec.errors.push('예외: ' + e.message));
+      window.addEventListener('unhandledrejection', e => rec.errors.push('처리되지 않은 거부: ' + String(e.reason)));
+      document.addEventListener('securitypolicyviolation', e => rec.blocked.push(e.blockedURI));
+    })();
+  <\/script>`;
+
+  // 앱 스크립트 뒤에 실행된다. 최상위 let/const는 window 속성이 아니지만 같은 문서의 일반 스크립트끼리는
+  // 전역 렉시컬 환경을 공유하므로 여기의 getter가 읽을 수 있다. 시험은 상태를 읽기만 한다.
+  const ACCESSOR = `<script>
+    window.__app = {
+      get bookmarks() { return bookmarks; },
+      get cloudLoading() { return cloudLoading; },
+      get firebaseConfig() { return FIREBASE_CONFIG; },
+      get firebase() { return firebase; },
+      get defaultFirebaseConfig() { return DEFAULT_FIREBASE_CONFIG; },
+      keys: { STORAGE_KEY, LEGACY_STORAGE_KEY, THEME_KEY, CLOUD_HINT_KEY, CLOUD_COPY_KEY_PREFIX }
+    };
+    // 다운로드 대신 내용을 기록한다. exportHTML·exportJSON은 전역 이름으로 부른다.
+    downloadFile = function (content, type, filename) { window.__rec.downloads.push({ content, type, filename }); };
+  <\/script>`;
+
+  function replaceOnce(source, from, to, label) {
+    const count = source.split(from).length - 1;
+    if (count !== 1) throw new HarnessError(`${label}: 원문에서 ${format(from)}이(가) ${count}번 나옴 (1번이어야 함)`);
+    return source.replace(from, () => to);
+  }
+
+  // config: undefined면 저장소의 config.js를 그대로, null이면 태그를 지우고(파일 없음), 문자열이면 그 내용의 인라인 스크립트.
+  function buildSource(config) {
+    let source = appSource;
+    if (currentMutation) {
+      for (const [from, to] of currentMutation.replace) source = replaceOnce(source, from, to, `변이 "${currentMutation.name}"`);
+    }
+    if (config !== undefined) {
+      source = replaceOnce(source, CONFIG_TAG, config === null ? '' : `<script>${config}<\/script>`, 'config.js 태그');
+    }
+    const base = new URL('../', location.href).href;
+    const csp = `default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:`;
+    source = replaceOnce(source, '<head>', `<head><base href="${base}"><meta http-equiv="Content-Security-Policy" content="${csp}">${RECORDER}`, '<head>');
+    return replaceOnce(source, '</body>', ACCESSOR + '</body>', '</body>');
+  }
+
+  class App {
+    constructor(ctx, options) {
+      this.ctx = ctx;
+      this.options = options;
+    }
+
+    async load() {
+      const frame = document.createElement('iframe');
+      frame.style.width = (this.options.width || 1024) + 'px';
+      const source = buildSource(this.options.config);
+      await new Promise(resolve => {
+        frame.addEventListener('load', resolve, { once: true });
+        frame.srcdoc = source;
+        document.getElementById('stage').appendChild(frame);
+      });
+      this.frame = frame;
+      this.win = frame.contentWindow;
+      this.doc = frame.contentDocument;
+      if (!this.win.__app) throw new Error('앱 스크립트가 끝까지 실행되지 않음 (상태 접근 스크립트 없음)');
+      return this;
+    }
+
+    get state() { return this.win.__app; }
+    get rec() { return this.win.__rec; }
+    get dialogs() { return this.rec.dialogs; }
+    get downloads() { return this.rec.downloads; }
+
+    $(selector) {
+      const element = this.doc.querySelector(selector);
+      if (!element) throw new Error(`요소 없음: ${selector}`);
+      return element;
+    }
+
+    $$(selector) { return [...this.doc.querySelectorAll(selector)]; }
+
+    click(target) {
+      (typeof target === 'string' ? this.$(target) : target).click();
+    }
+
+    type(selector, value) {
+      const input = this.$(selector);
+      input.value = value;
+      input.dispatchEvent(new this.win.Event('input', { bubbles: true }));
+    }
+
+    pressKey(key) {
+      this.doc.dispatchEvent(new this.win.KeyboardEvent('keydown', { key, bubbles: true }));
+    }
+
+    answerConfirm(...answers) { this.rec.confirmAnswers.push(...answers); }
+
+    titles() { return this.state.bookmarks.map(bm => bm.title); }
+    cardTitles() { return this.$$('.card .card-title').map(a => a.textContent); }
+    card(title) {
+      const card = this.$$('.card').find(c => c.querySelector('.card-title').textContent === title);
+      if (!card) throw new Error(`카드 없음: ${title}`);
+      return card;
+    }
+    modalOpen() { return this.$('#modalOverlay').style.display === 'flex'; }
+
+    // 파일 선택 창 대신 DataTransfer로 #fileInput에 파일을 넣고 change를 보낸다 (마크업의 onchange가 실행됨).
+    // FileReader가 비동기이므로 대화상자가 늘 때까지 기다린다 (가져오기는 어느 경로든 alert나 confirm으로 끝난다).
+    async importFile(name, text) {
+      const input = this.$('#fileInput');
+      const transfer = new this.win.DataTransfer();
+      transfer.items.add(new this.win.File([text], name));
+      input.files = transfer.files;
+      const before = this.dialogs.length;
+      input.dispatchEvent(new this.win.Event('change', { bubbles: true }));
+      await waitFor(() => this.dialogs.length > before, `${name} 가져오기의 알림`);
+    }
+
+    // 같은 localStorage로 다시 연다 (= 새로고침).
+    async reload() {
+      this.close();
+      return this.load();
+    }
+
+    close() {
+      if (this.frame) {
+        this.checkCommon();
+        this.frame.remove();
+        this.frame = null;
+      }
+    }
+
+    // 모든 시험 공통: 예상 밖 콘솔 오류·예외가 없고, 막힌 외부 요청은 파비콘뿐 (CLAUDE.md 체크리스트 "콘솔"·"의존성")
+    checkCommon() {
+      const rec = this.rec;
+      if (!rec) return;
+      if (rec.errors.length) throw new Error(`콘솔 오류·예외: ${rec.errors.join(' / ')}`);
+      const external = rec.blocked.filter(uri => !uri.startsWith(FAVICON_PREFIX));
+      if (external.length) throw new Error(`허용 목록 밖 외부 요청: ${external.join(', ')}`);
+    }
+  }
+
+  /* ---------- 실행 ---------- */
+  async function runTest(t) {
+    localStorage.clear();
+    const apps = [];
+    const ctx = {
+      async open(options = {}) {
+        const app = new App(ctx, options);
+        apps.push(app);
+        return app.load();
+      }
+    };
+    let timer;
+    try {
+      await Promise.race([
+        t.fn(ctx),
+        new Promise((resolve, reject) => { timer = setTimeout(() => reject(new Error(`${TEST_TIMEOUT_MS / 1000}초 안에 끝나지 않음`)), TEST_TIMEOUT_MS); })
+      ]);
+      apps.forEach(app => app.close());
+      return null;
+    } catch (err) {
+      if (err instanceof HarnessError) throw err;
+      return err && err.message ? err.message : String(err);
+    } finally {
+      clearTimeout(timer);
+      apps.forEach(app => { if (app.frame) app.frame.remove(); });
+      localStorage.clear();
+    }
+  }
+
+  // stopAtFirstFailure: 변이 점검에서는 하나만 실패해도 잡은 것이므로 멈춘다.
+  async function runSuite({ show, stopAtFirstFailure = false }) {
+    const failures = [];
+    let passed = 0;
+    for (const t of tests) {
+      const message = await runTest(t);
+      if (message === null) passed++;
+      else failures.push({ group: t.group, name: t.name, message });
+      if (show) addResultLine(t, message);
+      if (message !== null && stopAtFirstFailure) break;
+    }
+    return { passed, total: tests.length, failures };
+  }
+
+  function addResultLine(t, message) {
+    const li = document.createElement('li');
+    li.className = message === null ? 'pass' : 'fail';
+    li.textContent = `${message === null ? '✓' : '✗'} [${t.group}] ${t.name}${message === null ? '' : ' — ' + message}`;
+    document.getElementById('results').appendChild(li);
+  }
+
+  function setSummary(text) {
+    document.getElementById('summary').textContent = text;
+  }
+
+  // 누가 시험 포트에서 index.html을 직접 열었다면 앱의 서비스 워커가 범위 /로 등록돼 이 페이지를 가로챌 수 있다.
+  async function clearServiceWorkers() {
+    if ('serviceWorker' in navigator) {
+      const registrations = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(registrations.map(r => r.unregister()));
+    }
+    if ('caches' in window) {
+      const keys = await caches.keys();
+      await Promise.all(keys.filter(key => key.startsWith('jdrbm-')).map(key => caches.delete(key)));
+    }
+  }
+
+  async function report(result) {
+    if (!params.has('report')) return;
+    await fetch('/__result', { method: 'POST', body: JSON.stringify({ ...result, userAgent: navigator.userAgent }) });
+  }
+
+  async function start() {
+    const startedAt = performance.now();
+    if (!['127.0.0.1', 'localhost'].includes(location.hostname) || location.port !== TEST_PORT) {
+      setSummary(`이 주소에서는 시험을 돌리지 않습니다 (시험 전용 포트 ${TEST_PORT}에서만, node tests/run.mjs).`);
+      return;
+    }
+    try {
+      await clearServiceWorkers();
+      const response = await fetch(new URL('../index.html', location.href), { cache: 'no-store' });
+      if (!response.ok) throw new HarnessError(`index.html을 받지 못함 (${response.status})`);
+      appSource = await response.text();
+
+      if (params.has('mutants')) {
+        setSummary('변이 점검 중…');
+        const base = await runSuite({ show: true });
+        const mutants = [];
+        if (base.failures.length === 0) {
+          for (const mutant of MUTANTS) {
+            currentMutation = mutant;
+            try {
+              const run = await runSuite({ show: false, stopAtFirstFailure: true });
+              mutants.push(run.failures.length
+                ? { name: mutant.name, status: 'killed', caughtBy: run.failures[0] }
+                : { name: mutant.name, status: 'survived' });
+            } catch (err) {
+              if (!(err instanceof HarnessError)) throw err;
+              mutants.push({ name: mutant.name, status: 'missing', message: err.message });
+            }
+            currentMutation = null;
+          }
+        }
+        const killed = mutants.filter(m => m.status === 'killed').length;
+        setSummary(base.failures.length ? `원본에서 실패 ${base.failures.length}건` : `변이 점검: 잡음 ${killed}/전체 ${mutants.length}`);
+        await report({ mode: 'mutants', baseFailures: base.failures, mutants, durationMs: performance.now() - startedAt });
+        return;
+      }
+
+      setSummary('시험 중…');
+      const result = await runSuite({ show: true });
+      setSummary(`통과 ${result.passed}/전체 ${result.total}`);
+      await report({ mode: 'run', ...result, manual: MANUAL, durationMs: performance.now() - startedAt });
+    } catch (err) {
+      setSummary(`시험 오류: ${err.message}`);
+      if (params.has('report')) {
+        await fetch('/__result', { method: 'POST', body: JSON.stringify({ harnessError: err.message }) });
+      }
+    }
+  }
+</script>
+<script src="cases.js"></script>
+<script>
+  start();
+</script>
+</body>
+</html>
