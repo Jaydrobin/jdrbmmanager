@@ -75,7 +75,8 @@
     /* Controls */
     .controls { display: flex; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; }
     .search-box { flex: 1; min-width: 220px; padding: 10px 14px; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.95rem; background: var(--input-bg); color: var(--text); }
-    .filter-select { padding: 10px 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--input-bg); color: var(--text); cursor: pointer; }
+    /* 선택 상자는 가장 긴 항목의 폭보다 줄지 않으므로, 긴 카테고리가 있어도 줄을 넘지 않게 막는다 (K-24) */
+    .filter-select { max-width: 100%; padding: 10px 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--input-bg); color: var(--text); cursor: pointer; }
     .search-box:focus, .filter-select:focus { outline: 2px solid var(--primary); }
 
     /* Grid & Cards */

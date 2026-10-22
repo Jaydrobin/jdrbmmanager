@@ -479,10 +479,9 @@ test('점검', 'XSS: 제목·주소·카테고리의 따옴표·태그가 속성
   eq(app.win.__xss, undefined, '스크립트 실행');
 });
 
-// 카테고리 이름이 길면 필터 선택 상자가 그 폭으로 넓어지는 문제는 K-24(미해결)라 여기서는 짧은 카테고리만 쓴다.
-test('점검', '360px 폭에서 가로 스크롤이 없다 (긴 제목·주소, 모달)', async t => {
+test('점검', '360px 폭에서 가로 스크롤이 없다 (긴 제목·주소·카테고리, 모달) (K-24)', async t => {
   setStored([
-    { id: 1, title: '아주 긴 제목'.repeat(20), url: 'https://very-long.example/' + 'a'.repeat(300), category: '긴 이름', addedAt: null },
+    { id: 1, title: '아주 긴 제목'.repeat(20), url: 'https://very-long.example/' + 'a'.repeat(300), category: '아주 긴 카테고리 이름'.repeat(9), addedAt: null },
     { id: 2, title: 'GitHub', url: 'https://github.com', category: '개발', addedAt: null }
   ]);
   const app = await t.open({ width: 360 });
@@ -560,6 +559,7 @@ const MUTANTS = [
   { name: 'URL 스킴 검사 제거', replace: [["return protocol === 'http:' || protocol === 'https:';", 'return true;']] },
   { name: 'URL 길이 검사 제거', replace: [['if (!title || !isSafeUrl(url) || url.length > MAX_URL_LENGTH) return null;', 'if (!title || !isSafeUrl(url)) return null;']] },
   { name: '카드 href 이스케이프 제거 (K-01)', replace: [['href="${escapeHtml(bm.url)}"', 'href="${bm.url}"']] },
+  { name: '필터 선택 상자 폭 제한 제거 (K-24)', replace: [['.filter-select { max-width: 100%; ', '.filter-select { ']] },
   { name: '이동 뒤 포커스 되돌리기 제거 (D-016)', replace: [['if (button) button.focus();', '']] },
   { name: '병합 ID 중복 검사 제거 (K-05)', replace: [['if (bm.id === null || usedIds.has(bm.id)) bm.id = nextId++;', 'if (bm.id === null) bm.id = nextId++;']] },
   {
