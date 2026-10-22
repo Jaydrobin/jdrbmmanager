@@ -492,5 +492,79 @@ test('점검', '360px 폭에서 가로 스크롤이 없다 (긴 제목·주소, 
   ok(root.scrollWidth <= root.clientWidth, `모달 scrollWidth ${root.scrollWidth} > clientWidth ${root.clientWidth}`);
 });
 
-/* ---------- 변이 점검 (3.8): 앱 원문에 알려진 결함을 하나씩 넣는다. 하나 이상의 시험이 실패해야 한다 ---------- */
-const MUTANTS = [];
+/* ---------- 22~24. 배포별 설정 파일 판정 (D-026) ----------
+   srcdoc 앱은 about:이라 클라우드를 켜지 않으므로 로그인 버튼·서비스 워커는 수동으로 남고, 여기서는 쓸 설정의 판정만 본다.
+   open({ config })는 <script src="config.js">를 그 내용의 인라인 스크립트로 바꾼다(null이면 태그를 지움 = 파일 없음). */
+const OTHER_PROJECT = `{ apiKey: 'k', authDomain: 'other-project.firebaseapp.com', projectId: 'other-project', appId: '1:1:web:1' }`;
+
+function configWarnings(app) {
+  return app.rec.warnings.filter(message => message.includes('config.js'));
+}
+
+test('22', 'config.js가 없거나 템플릿 그대로면 기본 설정, 경고 없음', async t => {
+  for (const [label, config] of [['파일 없음', null], ['저장소의 템플릿', undefined], ['firebase 키 없음', 'window.APP_CONFIG = {};']]) {
+    const app = await t.open({ config });
+    eq(app.state.firebaseConfig, app.state.defaultFirebaseConfig, `${label}: 쓸 설정`);
+    eq(configWarnings(app), [], `${label}: 경고`);
+    app.close();
+  }
+});
+
+test('23', 'firebase: null이면 클라우드 끔, 경고 없음', async t => {
+  const app = await t.open({ config: 'window.APP_CONFIG = { firebase: null };' });
+  eq(app.state.firebaseConfig, null, '쓸 설정');
+  eq(configWarnings(app), [], '경고');
+});
+
+test('23', '클라우드를 끈 채 열면 로그인한 채로 닫은 표시와 사본을 지우고 잠기지 않은 로컬 목록을 보인다', async t => {
+  localStorage.setItem('single_file_bookmarks_cloud_uid', 'uid-test');
+  localStorage.setItem('single_file_bookmarks_cloud_copy_uid-test', JSON.stringify({
+    version: 1, lastSync: 0, lastFullSync: 0, items: [{ id: 9, title: '계정 항목', url: 'https://cloud.example', category: '', addedAt: null, order: 0 }]
+  }));
+  const app = await t.open({ config: 'window.APP_CONFIG = { firebase: null };' });
+  eq(app.titles(), SEED_TITLES, '로컬 목록');
+  eq(app.state.cloudLoading, false, '잠금');
+  ok(!app.$('[onclick="openModal()"]').disabled && !cardButton(app, 'Google', 'edit').disabled, '추가·수정 버튼이 열림');
+  eq(localStorage.getItem('single_file_bookmarks_cloud_uid'), null, '표시 키');
+  eq(localStorage.getItem('single_file_bookmarks_cloud_copy_uid-test'), null, '사본 키');
+});
+
+test('24', '형식이 틀린 config.js는 클라우드 끔 + 콘솔 경고 한 줄', async t => {
+  const cases = [
+    ['apiKey 누락', `window.APP_CONFIG = { firebase: { authDomain: 'a.firebaseapp.com', projectId: 'a', appId: '1:1:web:1' } };`],
+    ['빈 문자열 값', `window.APP_CONFIG = { firebase: { apiKey: '', authDomain: 'a.firebaseapp.com', projectId: 'a', appId: '1:1:web:1' } };`],
+    ["firebase: 'x'", `window.APP_CONFIG = { firebase: 'x' };`],
+    ['APP_CONFIG가 배열', `window.APP_CONFIG = [];`],
+    ['const로 선언', `const APP_CONFIG = { firebase: ${OTHER_PROJECT} };`]
+  ];
+  for (const [label, config] of cases) {
+    const app = await t.open({ config });
+    eq(app.state.firebaseConfig, null, `${label}: 쓸 설정`);
+    eq(configWarnings(app).length, 1, `${label}: 경고 수`);
+    eq(app.titles(), SEED_TITLES, `${label}: 로컬 목록`);
+    app.close();
+  }
+});
+
+test('24', '형식이 맞는 다른 프로젝트 값이면 그 설정을 쓴다', async t => {
+  const app = await t.open({ config: `window.APP_CONFIG = { firebase: ${OTHER_PROJECT} };` });
+  eq(app.state.firebaseConfig.projectId, 'other-project', 'projectId');
+  eq(configWarnings(app), [], '경고');
+});
+
+/* ---------- 변이 점검 (3.8): 앱 원문에 알려진 결함을 하나씩 넣는다. 하나 이상의 시험이 실패해야 한다 ----------
+   replace: [원문, 바꿀 글] 쌍. 원문은 index.html에 정확히 한 번 나와야 한다(줄 끝은 LF로 맞춘 뒤 비교).
+   새 검증(정규식·불변식·보안 검사)을 더하면 그 검증을 빼는 변이를 여기에 더한다. */
+const MUTANTS = [
+  { name: 'URL 스킴 검사 제거', replace: [["return protocol === 'http:' || protocol === 'https:';", 'return true;']] },
+  { name: 'URL 길이 검사 제거', replace: [['if (!title || !isSafeUrl(url) || url.length > MAX_URL_LENGTH) return null;', 'if (!title || !isSafeUrl(url)) return null;']] },
+  { name: '카드 href 이스케이프 제거 (K-01)', replace: [['href="${escapeHtml(bm.url)}"', 'href="${bm.url}"']] },
+  { name: '병합 ID 중복 검사 제거 (K-05)', replace: [['if (bm.id === null || usedIds.has(bm.id)) bm.id = nextId++;', 'if (bm.id === null) bm.id = nextId++;']] },
+  {
+    name: '카테고리 목록을 필터 뒤에 갱신 (K-07)',
+    replace: [['    updateCategoryOptions();\n    const filtered = getVisibleBookmarks();', '    const filtered = getVisibleBookmarks();\n    updateCategoryOptions();']]
+  },
+  { name: '마이그레이션 저장 제거', replace: [['localStorage.setItem(STORAGE_KEY, JSON.stringify(legacy));', '']] },
+  { name: '가져오기 중복 건너뛰기 제거', replace: [['if (seen.has(key)) return false;', '']] },
+  { name: '설정 필수 키 검사 제거', replace: [["FIREBASE_REQUIRED_KEYS.every(key => typeof config[key] === 'string' && config[key] !== '')", 'true']] }
+];

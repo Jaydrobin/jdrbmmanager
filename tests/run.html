@@ -310,7 +310,8 @@
       await clearServiceWorkers();
       const response = await fetch(new URL('../index.html', location.href), { cache: 'no-store' });
       if (!response.ok) throw new HarnessError(`index.html을 받지 못함 (${response.status})`);
-      appSource = await response.text();
+      // 체크아웃 설정에 따라 CRLF일 수 있다. 여러 줄 변이가 줄 끝과 무관하게 맞도록 맞춘다.
+      appSource = (await response.text()).replace(/\r\n/g, '\n');
 
       if (params.has('mutants')) {
         setSummary('변이 점검 중…');
