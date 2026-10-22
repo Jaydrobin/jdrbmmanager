@@ -266,7 +266,7 @@
 - **맥락:** 네트워크 없이도 앱을 열어야 하고(Firestore는 데이터만 오프라인 처리), 폰에서 앱처럼 쓰고 싶음.
 - **결정:**
   - `sw.js`를 `./sw.js`로 등록해 **앱 폴더 범위**만 다룬다. `https`와 `localhost`에서만 동작. 설정으로 클라우드를 꺼도 등록한다(`isServedOverHttp`, D-026).
-  - 설치 때 앱 셸(`./`, `./index.html`, 매니페스트, 아이콘)과 SDK 세 파일을 캐시(`CACHE_NAME`, 현재 `jdrbm-v0.8`). 릴리스마다 이름을 올리고, 이전 캐시는 `activate`에서 지운다.
+  - 설치 때 앱 셸(`./`, `./index.html`, 매니페스트, 아이콘)과 SDK 세 파일을 캐시(`CACHE_NAME`, 현재 `jdrbm-v0.8.4`). 릴리스마다 이름을 올리고, 이전 캐시는 `activate`에서 지운다.
   - 없어도 되는 파일(`OPTIONAL_FILES`, 지금은 `config.js`, D-026)은 앱 셸과 따로 하나씩 캐시하고 실패를 무시한다. `cache.addAll`은 파일 하나만 없어도 설치 전체가 실패하기 때문이다.
   - 요청별 전략: 앱 본체·매니페스트·`config.js`는 **네트워크 우선**(새 버전을 바로 받기 위해. 4초 안에 응답이 없으면 캐시로 열고, 늦게 온 응답으로 캐시만 갱신), SDK·아이콘은 캐시 우선(버전이 URL에 있어 바뀌지 않음), Firestore·Auth 통신과 파비콘은 가로채지 않음(SDK가 오프라인을 직접 처리).
   - `manifest.webmanifest`: `start_url`·`scope`는 `./`, `display: standalone`, 아이콘 192·512(가운데 안전 영역에 그려 `any`·`maskable` 겸용).
