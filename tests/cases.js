@@ -1,4 +1,4 @@
-/* 자동 회귀 시험 목록 (DECISIONS.md D-027). 묶음 이름은 CLAUDE.md 코드 점검 규약 3의 회귀 번호, '점검'은 체크리스트 항목.
+/* 자동 회귀 시험 목록 (DECISIONS.md D-027). 묶음 이름은 docs/REGRESSION.md의 회귀 번호, '점검'은 체크리스트 항목.
    시험은 화면 조작이나 앱의 전역 함수로만 상태를 바꾸고, app.state(__app)는 읽기에만 쓴다.
    시험마다 이 출처의 localStorage가 비워진 채로 시작한다. 하네스 API는 run.html. */
 

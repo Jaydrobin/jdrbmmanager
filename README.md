@@ -126,7 +126,7 @@ Firebase 설정값(apiKey 등, `index.html`의 `DEFAULT_FIREBASE_CONFIG` 또는 
 로그인·서비스 워커는 `file://`에서 동작하지 않으므로 저장소 폴더를 `http://localhost:포트`로 서비스해 확인합니다(아무 정적 서버나 가능). 포트 8766은 자동 시험 전용이라 쓰지 않습니다.
 
 ### 자동 시험
-로컬 모드의 회귀 시험(CLAUDE.md 코드 점검 규약 3의 1~11, 22~24의 설정 판정, XSS·360px 점검)을 헤드리스 브라우저로 돌립니다. 필요한 것: Node.js(내장 모듈만, `npm install` 없음)와 크롬 또는 엣지.
+로컬 모드의 회귀 시험([docs/REGRESSION.md](docs/REGRESSION.md)의 1~11, 22~24의 설정 판정, XSS·360px 점검)을 헤드리스 브라우저로 돌립니다. 필요한 것: Node.js(내장 모듈만, `npm install` 없음)와 크롬 또는 엣지.
 
 ```bash
 node tests/run.mjs
