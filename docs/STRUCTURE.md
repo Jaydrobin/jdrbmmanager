@@ -1,5 +1,7 @@
 # index.html 구조
 
+`index.html`의 `<script>`를 나눈 구역 주석(`/* ---------- 제목 ---------- */`)과 각 구역의 내용. 파일별 내용은 [CLAUDE.md](../CLAUDE.md) 「구조」에 있다.
+
 | 구역 주석 | 내용 |
 |---|---|
 | (상단 상수) | `STORAGE_KEY`(v3), `LEGACY_STORAGE_KEY`(v2), `THEME_KEY`, `MAX_*_LENGTH`(규칙과 같은 길이 제한), `CLOUD_COPY_KEY_PREFIX`·`CLOUD_COPY_VERSION`(계정 목록 사본), `DEFAULT_FIREBASE_CONFIG`(기본 설정)·`FIREBASE_REQUIRED_KEYS`, `FIREBASE_CONFIG`(= `resolveFirebaseConfig()`, `null`이면 클라우드 끔), `FIREBASE_SDK_URL`(버전 고정), 클라우드를 껐으면 남은 사본 지우기, `bookmarks` 초기화(로컬 목록, 로그인한 채로 닫았으면 사본 `bootCopy`), `store` 생성 |
