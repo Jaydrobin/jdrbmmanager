@@ -18,22 +18,6 @@
 | `tests/run.html` | 하네스. `TEST_PORT` 출처 가드, `index.html` 원문을 `srcdoc`에 주입(`<base>`·CSP·기록기 `__rec`·getter `__app`·`downloadFile` 기록기), `App`(조작 도우미), `eq`/`ok`/`waitFor`, 공통 검사(콘솔 오류·외부 요청), 변이 실행 |
 | `tests/cases.js` | 시험 목록. `test('<회귀 번호>' 또는 '점검', 이름, fn)`, 픽스처(크롬 형식 북마크 HTML 등), `MUTANTS` |
 
-| 구역 주석 | 내용 |
-|---|---|
-| (상단 상수) | `STORAGE_KEY`(v3), `LEGACY_STORAGE_KEY`(v2), `THEME_KEY`, `MAX_*_LENGTH`(규칙과 같은 길이 제한), `CLOUD_COPY_KEY_PREFIX`·`CLOUD_COPY_VERSION`(계정 목록 사본), `DEFAULT_FIREBASE_CONFIG`(기본 설정)·`FIREBASE_REQUIRED_KEYS`, `FIREBASE_CONFIG`(= `resolveFirebaseConfig()`, `null`이면 클라우드 끔), `FIREBASE_SDK_URL`(버전 고정), 클라우드를 껐으면 남은 사본 지우기, `bookmarks` 초기화(로컬 목록, 로그인한 채로 닫았으면 사본 `bootCopy`), `store` 생성 |
-| `데이터 검증 및 불러오기` | `isSafeUrl`, `truncateText`, `normalizeBookmark`, `generateId`, `sanitizeBookmarks`, `loadBookmarks` (v2 → v3 마이그레이션, 시드는 복사본), `loadCloudCopy`(사본 검증, 하나라도 잘못되면 버림) |
-| `저장소 및 상태 작업` | `createLocalStore`(`store`), 작업 함수 `addBookmark` / `updateBookmark` / `removeBookmark` / `moveBookmark` / `replaceAll` / `mergeAll` |
-| `로그인 및 클라우드 동기화` | 주기 상수(`FULL_SYNC_INTERVAL_DAYS`, `TOMBSTONE_KEEP_DAYS`), `resolveFirebaseConfig`·`isAppConfigDeclared`(쓸 설정, D-026), `isServedOverHttp`/`canUseCloud`(서비스 워커는 앞의 것만), `initCloud`(SDK 동적 import, 10초 제한), `setCloudLoading`(계정 준비 전 잠금, K-16), `waitForSync`, `login`/`logout`/`toggleAuth`, `updateSyncStatus`/`watchPendingWrites`(동기화 상태), `enterCloudMode` → `startCloudSync`(필요하면 전체 받기 → 바뀐 것 구독, D-025) / `leaveCloudMode`, `showCloudList`(원격 변경을 화면에), `forgetCloudCopy`(표시 키와 사본 지우기), `offerLocalMigration`, `cleanTombstones`(묘비 비우기), `createCloudStore`(`order`로 순서 저장, 묘비 삭제, 사본 저장, `fetchAll`·`applyChanges`) |
-| `다크 모드` | `initTheme` / `applyTheme` / `toggleTheme` (저장은 `toggleTheme`에서만) |
-| `파비콘 및 렌더링` | `getFaviconUrl`, `getVisibleBookmarks`(검색·필터), `renderBookmarks` (그리드 전체 재생성, 계정 준비 전에는 카드 버튼·드래그 잠금) |
-| `드래그 앤 드롭` | `setupDragEvents`, `moveBookmarkBy` (이동 버튼) |
-| `카테고리 필터 관리` | `updateCategoryOptions` |
-| `모달 및 CRUD` | 모달 열기/닫기, Esc 처리, `saveBookmark`(`<form>` submit), `editBookmark`, `deleteBookmark` |
-| `HTML 북마크 내보내기` | `EXPORT_DEFAULT_FOLDER`(카테고리 없는 항목의 폴더), `EXPORT_GENERATOR`(이 앱이 내보낸 파일 표시), `exportHTML` (Netscape 형식), `downloadFile` |
-| `JSON 백업 / 복구` | `exportJSON`, `importJSON`([📂 가져오기]. 파일을 JSON 백업과 북마크 HTML로 가려 분기), `escapeHtml` |
-| `브라우저 북마크 가져오기` | `isBookmarkHtml`, `parseBrowserBookmarks`(`DOMParser`, `folderCategory`로 폴더 → 카테고리), `urlKey`(같은 주소 판별), `importBrowserBookmarks`(중복 건너뛰고 `mergeAll`) (D-024) |
-| (끝) | 초기화, `online`/`offline` 이벤트, 서비스 워커 등록 |
-
 ## 작성 규약
 
 ### 원칙
@@ -127,35 +111,6 @@ Git Bash에서 `점검: 명령 → 기대값`. `<기준>`은 지시문의 기준
 - **자동:** 1~11과 22~24의 설정 판정은 `node tests/run.mjs`가 돌린다(`tests/cases.js`의 묶음 이름 = 번호). 체크리스트의 XSS·360px·콘솔 오류·허용 목록 밖 외부 요청도 함께 본다. 자동 시험이 덮지 못하는 부분은 각 번호의 **(수동)** 표시다.
 - **수동:** 작업 완료 때 작성 세션이 diff가 닿는 구역(구조 표)의 (수동) 부분을 돌리고, 릴리스(`vX.Y`) PR에서는 1~11의 (수동) 부분을 모두 돌린다. 12~21은 모두 수동이며 diff가 로그인·동기화 구역에 닿을 때 「사용자가 확인할 항목」으로 넘기고, 22~24의 (수동) 부분은 설정 처리에 닿을 때만 돌린다.
 - **새 검증:** 새로 더한 검증(정규식·불변식·보안 검사)은 걸러야 할 입력이 걸러지는 시험을 `tests/cases.js`에 더하고, 그 검증을 빼는 변이를 `MUTANTS`에 더해 `--mutants`에서 잡히는지 본다.
-
-수동 부분은 `http://localhost:포트`(8766 아님)에서(`file://`로는 로그인·동기화를 확인할 수 없다), 로그아웃 상태로 개발자 도구에서 `localStorage.clear()` 후 새로고침해 깨끗한 상태로 시작한다. 클라우드 테스트는 사용자 계정의 실제 데이터에 쓰므로 **이름으로 구별되는 테스트 항목만** 만들고 지운다.
-
-1. 시드 북마크 3개가 보인다.
-2. 추가: `example.com` 입력 후 Enter → `https://example.com`으로 저장, 목록 맨 앞에 나타남. 빈 칸으로 Enter → 저장되지 않음. Esc → 모달이 닫힘.
-3. 수정 → 값이 바뀜. 삭제 → 확인 후 사라짐. (수동: 확인 창의 모양)
-4. 검색(제목·URL), 카테고리 필터가 동작한다. 필터 중 그 카테고리의 마지막 항목을 지우면 필터가 '전체'로 돌아간다.
-5. 드래그와 [←]/[→] 버튼으로 순서 변경 → 새로고침 후에도 유지. 필터 중 이동도 확인. (수동: 실제 마우스·터치로 드래그)
-6. 테마: 전환하기 전에는 OS 설정을 따르고 저장하지 않는다. 전환 → 새로고침 후에도 유지. (수동: 앱이 열린 동안 OS 테마를 바꾸면 따라감, 다크 모드 가독성)
-7. HTML 내보내기 → 크롬 등에서 가져오면 카테고리가 폴더로 보이고, 새로 추가한 북마크의 추가 시각이 맞다. (수동: 크롬에서 실제로 가져오기)
-8. JSON 백업 → [📂 가져오기]로 복구: [확인]은 덮어쓰기, [취소]는 병합. 같은 파일을 두 번 병합한 뒤 하나를 지워도 하나만 사라진다.
-9. 잘못된 파일(배열 아닌 JSON, 텍스트 파일, 빈 HTML 파일, 북마크 없는 HTML) 가져오기 → 알림 후 앱이 정상 동작.
-10. 브라우저 북마크 가져오기: 크롬 등에서 내보낸 북마크 HTML을 [📂 가져오기] → 가져올 개수 확인 후 목록 맨 앞에 추가. 폴더가 카테고리가 되고(가장 안쪽 폴더, `북마크바`·`기타 북마크` 등 최상위 폴더는 제외), 추가 시각이 브라우저와 같다. `javascript:` 주소는 건너뛴다. 같은 파일을 다시 가져오면 "새로 가져올 북마크가 없습니다". 7에서 내보낸 파일을 빈 목록에 가져오면 카테고리가 그대로 돌아온다(`기타 북마크`처럼 브라우저 최상위 폴더와 이름이 같은 카테고리 포함). (수동: 크롬에서 실제로 내보낸 파일)
-11. 마이그레이션: `single_file_bookmarks_v2`에만 데이터를 넣고 새로고침 → 같은 목록이 보이고 v3 키가 생긴다.
-12. 로그인(사용자가 직접): 헤더에 계정과 `✓ 동기화됨`. 로컬에 사용자 데이터가 있고 처음 로그인하는 기기면 올릴지 묻는다.
-13. 클라우드에서 추가·수정·삭제·이동·북마크 HTML 가져오기 → 서버 순서까지 반영(`getDocsFromServer`로 확인), 화면·서버·사본(`single_file_bookmarks_cloud_copy_<uid>`)의 순서가 같다. 삭제한 문서는 서버에 `deleted`·`updatedAt`만 있는 묘비로 남고 `orderBy('order')` 결과에는 없다. 이동 버튼 포커스 유지.
-14. 다른 기기의 변경 반영: 같은 계정의 다른 브라우저(또는 REST API로 직접 쓰기)에서 추가·일부 수정·묘비로 바꾼 내용이 몇 초 안에 화면과 사본에 보인다.
-15. 오프라인: `disableNetwork` 상태에서 추가 → 1초 뒤 `⬆ 올릴 변경 있음`, `enableNetwork` 후 `✓ 동기화됨`과 서버 반영. 그 상태로 로그아웃하면 경고가 뜬다. 삭제가 이김: `disableNetwork` 상태에서 테스트 항목을 수정하고 REST로 묘비를 쓴 뒤 `enableNetwork` → 알림 없이 목록에서 빠진다.
-16. 로그인 상태로 새로고침 → 사본이 곧바로 보이고 추가·가져오기·카드 버튼이 잠겼다가(내보내기는 가능) 풀린다. 새로고침 전 사본의 `lastSync` 이후로 바뀐 문서 수(`getCountFromServer(where('updatedAt', '>=', …))`)만 읽힌다. 로컬 서버를 멈추고 새로고침해도 서비스 워커 캐시로 열리고 사본이 보인다.
-17. 로그아웃 → 로그인 전 로컬 목록으로 돌아가고 로그인 버튼이 보이며, 사본 키와 Firestore IndexedDB 캐시가 지워진다. SDK 주소를 잘못된 버전으로 바꾼 사본을 열면 로그인 버튼 없이 로컬 모드로 동작한다.
-18. 전체 동기화: REST로 테스트 문서를 만들고 반영된 뒤 REST로 문서를 직접 지우면(묘비 없이) 목록에 남는다. 사본의 `lastFullSync`를 8일 전으로 바꾸고(열린 탭이 사본을 다시 쓰기 전에 곧바로) 새로고침 → 그 항목이 빠지고 `lastFullSync`가 지금으로 바뀐다.
-19. 깨진 사본: 사본에 `javascript:` 주소 항목을 넣거나 JSON을 깨뜨리고 새로고침 → "계정 목록을 불러오는 중…" 뒤 전체를 다시 받는다.
-20. 묘비 비우기: 상태 표시를 누르면 삭제 기록 수·용량을 묻고, 방금 만든 묘비는 남는다("8일이 지난 삭제 기록이 없습니다"). 테스트 묘비만 있을 때 `store.purgeTombstones(Date.now())`로 기준 0일을 확인한다(다른 묘비가 있으면 하지 않음). 오프라인(`navigator.onLine` false)이면 "연결된 뒤에 다시 시도해 주세요."
-21. 테스트가 끝나면 테스트 항목을 지우고, 그 묘비도 20의 방법으로 비워 서버에 흔적을 남기지 않는다. 다른 묘비가 있어 기준 0일로 비울 수 없으면, 다른 기기(폰)가 삭제를 받은 뒤 테스트 묘비 문서만(`deleted`·`updatedAt`만 있는지 확인하고) `deleteDoc`으로 지운다.
-22. `config.js`를 치운 사본(다른 포트): 기본 설정으로 로그인 버튼이 보이고, 콘솔 오류는 `config.js` 404 한 줄뿐이다. 서비스 워커가 설치되고 서버를 멈춰도 열린다. (수동: 로그인 버튼, 404 한 줄, 서비스 워커. 자동은 설정 판정만)
-23. `config.js`를 `window.APP_CONFIG = { firebase: null };`로 바꾼 사본: 로그인 버튼 없이 로컬 모드. 로그인한 채로 닫은 상태(`single_file_bookmarks_cloud_uid`와 사본을 직접 넣음)에서 열어도 잠기지 않고 로컬 목록이 보이며 두 키가 지워진다. 서비스 워커는 등록된다. (수동: 로그인 버튼 없음, 서비스 워커 등록)
-24. 형식이 틀린 `config.js`(`apiKey` 누락, `firebase: 'x'`, `const APP_CONFIG = {…}`): 로그인 버튼 없이 로컬 모드, 콘솔에 경고 한 줄. 형식이 맞는 다른 프로젝트 값이면 `firebase.app.options.projectId`가 그 값이다. (수동: 로그인 버튼 없음, `firebase.app.options.projectId`. 자동은 `FIREBASE_CONFIG`와 경고 수)
-
-22~24는 `config.js`를 고친 사본 폴더에서 하고 저장소의 `config.js`는 커밋하지 않는다. 테스트 항목 밖의 데이터 수정·덮어쓰기 복구는 사용자가 허락할 때만 한다. `confirm`·`alert`를 가로챘으면 끝내기 전에 탭을 새로고침한다(남은 가로채기가 실제 계정 데이터를 바꿀 수 있다). Claude 앱의 브라우저는 `confirm`·`alert`를 곧바로 취소로 처리하므로, 대화상자를 사람이 봐야 하는 확인은 「사용자가 확인할 항목」으로 넘긴다.
 
 ### 4. 막는 지적
 - 기준 문서(작업 중인 설계도, DECISIONS.md의 결정·기능·데이터 모델, 이 파일의 규약과 회귀 테스트)와 **다른 동작**이면서 `[확인됨]`이고, **이 범위가 만들었거나 이 범위 때문에 드러난 것**만 막는다.
